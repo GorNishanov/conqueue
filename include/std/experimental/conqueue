@@ -3,114 +3,171 @@
 
 #ifndef _STD_EXPERIMENTAL_CONQUEUE
 #define _STD_EXPERIMENTAL_CONQUEUE
-#include <system_error>
+#include <atomic>
 #include <deque>
 #include <mutex>
+#include <system_error>
+#include <variant>
+
+#include <stdexec/__detail/__intrusive_queue.hpp>
 #include <stdexec/execution.hpp>
 
-namespace std::experimental
-{
+#include <exec/__detail/__manual_lifetime.hpp>
 
-  enum class conqueue_errc
-  {
-    future_already_retrieved = 1,
-    promise_already_satisfied,
-    no_state,
-    broken_promise
-  };
+namespace std::experimental {
+
+enum class conqueue_errc {
+  future_already_retrieved = 1,
+  promise_already_satisfied,
+  no_state,
+  broken_promise
+};
 
 }
 
-namespace std
-{
-  template <>
-  struct is_error_code_enum<experimental::conqueue_errc> : public true_type
-  {
+namespace std {
+template <>
+struct is_error_code_enum<experimental::conqueue_errc> : public true_type {};
+} // namespace std
+
+namespace std::experimental {
+
+error_code make_error_code(conqueue_errc e) noexcept;
+error_condition make_error_condition(conqueue_errc e) noexcept;
+
+const error_category &conqueue_category() noexcept;
+
+class conqueue_error : public logic_error {
+public:
+  conqueue_error(error_code ec);
+  explicit conqueue_error(conqueue_errc);
+  const error_code &code() const noexcept;
+  const char *what() const noexcept;
+};
+
+// Inspired by https://wg21.link/P0260R5 A proposal to add a concurrent queue to
+// the standard library and https://wg21.link/p1958 A proposal to add a
+// concurrent queue to the standard library
+
+template <typename T> class buffer_queue {
+  buffer_queue() = delete;
+  buffer_queue(const buffer_queue &) = delete;
+  buffer_queue &operator=(const buffer_queue &) = delete;
+
+  struct pop_sender;
+  struct push_sender;
+
+  struct waiter_base {
+    waiter_base *next{};
+    T *value_ptr{};
+    void (*__complete)(waiter_base *) noexcept;
   };
+
+  struct sync_waiter : waiter_base {
+    std::atomic_flag flag;
+
+    sync_waiter(T &x) noexcept {
+      this->value_ptr = std::addressof(x);
+      this->__complete = [](waiter_base *w) noexcept {
+        auto *self = static_cast<sync_waiter *>(w);
+        self->flag.notify_one();
+      };
+    }
+
+    void wait() noexcept { flag.wait(false); }
+  };
+
+public:
+  typedef T value_type;
+  explicit buffer_queue(size_t max_elems);
+  template <typename Iter>
+  buffer_queue(size_t max_elems, Iter first, Iter last);
+  ~buffer_queue() noexcept;
+
+  void close() noexcept;
+
+  T pop();
+  pop_sender async_pop() noexcept;
+  bool try_pop(T &);
+  bool try_pop(T &, std::error_code &ec);
+
+  // For expediency push(T&&) and push(T const&) were collapsed into
+  // push(T). Later we can split them up.
+
+  void push(T x);
+  push_sender async_push(T x);
+  bool try_push(const T &x);
+  bool try_push(const T &x, std::error_code &ec);
+
+private:
+  std::mutex mutex;
+  size_t limit;
+  std::deque<T> queue; // TODO: replace with a fixed size circular buffer.
+  // If the queue is empty, waiters are the readers.
+  // If the queue is full, waiters are the writers.
+  stdexec::__intrusive_queue<&waiter_base::next> waiters;
+};
+
+// Implementation
+
+template <typename T>
+buffer_queue<T>::buffer_queue(size_t max_elems) : limit(max_elems) {}
+
+template <typename T> buffer_queue<T>::~buffer_queue() noexcept { close(); }
+
+template <typename T> void buffer_queue<T>::close() noexcept {
+  // TODO: Complete all pending operations with error closed.
 }
 
-namespace std::experimental
-{
+template <typename T> void buffer_queue<T>::push(T x) {
+  std::unique_lock lock(mutex);
+  if (limit == 0) {
+    sync_waiter waiter(x);
+    waiters.push_back(&waiter);
+    lock.unlock();
+    return waiter.wait(); // TODO: Check queue closed error and throw.
+  }
+  // See if there are any waiters, if so, pass the value directly to them.
+  if (!waiters.empty()) {
+    auto *waiter = waiters.pop_front();
+    *waiter->value_ptr = std::move(x); // TODO: Mess with __manual_lifetime.
+    lock.unlock();
+    waiter->__complete(waiter);
+    return;
+  }
+  queue.push_back(std::move(x));
+  --limit;
+}
 
-  error_code make_error_code(conqueue_errc e) noexcept;
-  error_condition make_error_condition(conqueue_errc e) noexcept;
+// implement pop
+template <typename T> T buffer_queue<T>::pop() {
+  T result; // TODO: mess with __manual_lifetime
+  std::unique_lock lock(mutex);
 
-  const error_category &conqueue_category() noexcept;
+  // If the queue is empty, wait for a value to be pushed.
+  if (queue.empty()) {
+    sync_waiter waiter(result);
+    waiters.push_back(&waiter);
+    lock.unlock();
+    waiter.wait(); // TODO: Check for queue closed error and throw.
+    return result;
+  }
+  result = std::move(queue.front());
+  queue.pop_front();
 
-  class conqueue_error : public logic_error
-  {
-  public:
-    conqueue_error(error_code ec);
-    explicit conqueue_error(conqueue_errc);
-    const error_code &code() const noexcept;
-    const char *what() const noexcept;
-  };
-
-  // Inspired by https://wg21.link/P0260R5 A proposal to add a concurrent queue to the standard library
-  // and https://wg21.link/p1958 A proposal to add a concurrent queue to the standard library
-
-  template <typename T>
-  class buffer_queue
-  {
-    buffer_queue() = delete;
-    buffer_queue(const buffer_queue &) = delete;
-    buffer_queue &operator=(const buffer_queue &) = delete;
-
-    struct pop_sender;
-    struct push_sender;
-
-    struct op_base
-    {
-      op_base *next{};
-    };
-
-  public:
-    typedef T value_type;
-    explicit buffer_queue(size_t max_elems);
-    template <typename Iter>
-    buffer_queue(size_t max_elems, Iter first, Iter last);
-    ~buffer_queue() noexcept;
-
-    void close() noexcept;
-
-    T pop();
-    pop_sender async_pop() noexcept;
-    bool try_pop(T &);
-    bool try_pop(T &, std::error_code &ec);
-
-    // For expediency push(T&&) and push(T const&) were collapsed into
-    // push(T). Later we can split them up.
-
-    void push(T x);
-    push_sender async_push(T x);
-    bool try_push(const T &x);
-    bool try_push(const T &x, std::error_code &ec);
-
-  private:
-    std::mutex mutex;
-    std::deque<T> queue;
-  };
-
-  // Implementation
-
-  template <typename T>
-  buffer_queue<T>::buffer_queue(size_t max_elems)
-      : queue(max_elems)
-  {
+  // See if there are any waiters
+  if (!waiters.empty()) {
+    auto *waiter = waiters.pop_front();
+    queue.push_back(std::move(*waiter->value_ptr));
+    lock.unlock();
+    waiter->__complete(waiter);
+    return result;
   }
 
-  template <typename T>
-  buffer_queue<T>::~buffer_queue() noexcept
-  {
-    close();
-  }
+  ++limit;
+  return result;
+}
 
-  template <typename T>
-  void buffer_queue<T>::close() noexcept
-  {
-    // TODO: Complete all pending operations with error closed.
-  }
-
-} // std::experimental
+} // namespace std::experimental
 
 #endif // _STD_EXPERIMENTAL_CONQUEUE
