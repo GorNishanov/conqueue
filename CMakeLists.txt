@@ -17,8 +17,6 @@ add_compile_options(-Werror)
 # Define the main library
 add_library(conqueue INTERFACE)
 
-list(APPEND stdexec_export_targets stdexec)
-
 # Declare the public include directories
 include(GNUInstallDirs)
 target_include_directories(conqueue INTERFACE

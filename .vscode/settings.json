@@ -1,6 +1,7 @@
 {
     "files.associations": {
-        "conqueue": "cpp"
+        "conqueue": "cpp",
+        "system_error": "cpp"
     },
     "cmake.configureOnOpen": true
 }
