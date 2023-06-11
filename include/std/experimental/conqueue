@@ -1,0 +1,118 @@
+/*
+ * Copyright (c) 2023 Gor Nishanov
+ *
+ * Licensed under the Apache License Version 2.0 with LLVM Exceptions
+ * (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ *
+ *   https://llvm.org/LICENSE.txt
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+#ifndef _STD_EXPERIMENTAL_CONQUEUE
+#define _STD_EXPERIMENTAL_CONQUEUE
+#include <system_error>
+#include <deque>
+#include <mutex>
+#include <stdexec/execution.hpp>
+
+namespace std::experimental {
+
+  enum class conqueue_errc {
+    future_already_retrieved = 1,
+    promise_already_satisfied,
+    no_state,
+    broken_promise
+  };
+
+}
+
+namespace std {
+  template <>
+  struct is_error_code_enum<experimental::conqueue_errc> : public true_type { };
+}
+
+namespace std::experimental {
+
+  error_code make_error_code(conqueue_errc e) noexcept;
+  error_condition make_error_condition(conqueue_errc e) noexcept;
+
+  const error_category& conqueue_category() noexcept;
+
+  class conqueue_error : public logic_error {
+   public:
+    conqueue_error(error_code ec);
+    explicit conqueue_error(conqueue_errc);
+    const error_code& code() const noexcept;
+    const char* what() const noexcept;
+  };
+
+  // Inspired by https://wg21.link/P0260R5 A proposal to add a concurrent queue to the standard library
+  // and https://wg21.link/p1958 A proposal to add a concurrent queue to the standard library
+
+  template <typename T>
+  class buffer_queue {
+    buffer_queue() = delete;
+    buffer_queue(const buffer_queue&) = delete;
+    buffer_queue& operator=(const buffer_queue&) = delete;
+
+    struct pop_sender;
+    struct push_sender;
+
+    struct op_base {
+      op_base* next{};
+    };
+
+   public:
+    typedef T value_type;
+    explicit buffer_queue(size_t max_elems);
+    template <typename Iter>
+    buffer_queue(size_t max_elems, Iter first, Iter last);
+    ~buffer_queue() noexcept;
+
+    void close() noexcept;
+
+    T pop();
+    pop_sender async_pop() noexcept;
+    bool try_pop(T&);
+    bool try_pop(T&, std::error_code& ec);
+
+    // For expediency push(T&&) and push(T const&) were collapsed into
+    // push(T). Later we can split them up.
+
+    void push(T x);
+    push_sender async_push(T x);
+    bool try_push(const T& x);
+    bool try_push(const T& x, std::error_code& ec);
+
+   private:
+    std::mutex mutex;
+    std::deque<T> queue;
+  };
+
+  // Implementation
+
+  template <typename T>
+  buffer_queue<T>::buffer_queue(size_t max_elems)
+    : queue(max_elems) {
+  }
+
+  template <typename T>
+  buffer_queue<T>::~buffer_queue() noexcept {
+    close();
+  }
+
+  template <typename T>
+  void buffer_queue<T>::close() noexcept {
+    // TODO: Complete all pending operations with error closed.
+  }
+
+
+} // std::experimental
+
+#endif // _STD_EXPERIMENTAL_CONQUEUE
