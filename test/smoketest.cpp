@@ -8,8 +8,13 @@
 
 #include <stdexec/execution.hpp>
 
+#include <chrono>
+#include <system_error>
+#include <thread>
+
 using namespace std;
 using namespace std::experimental;
+using namespace std::literals;
 
 using stdexec::on;
 
@@ -17,9 +22,62 @@ TEST_CASE("smoketest", "[smoketest]") {
   buffer_queue<int> q(2);
   q.push(1);
   q.push(2);
+  std::error_code ec;
+  REQUIRE_FALSE(q.try_push(3));
+  REQUIRE_FALSE(q.try_push(3, ec));
+  REQUIRE(ec == conqueue_errc::full);
 
   REQUIRE(q.pop() == 1);
   REQUIRE(q.pop() == 2);
+}
+
+TEST_CASE("initally closed test") {
+  buffer_queue<int> q(2);
+  q.close();
+  SECTION("push") {
+    error_code ec;
+    REQUIRE_FALSE(q.push(1, ec));
+    REQUIRE(ec == conqueue_errc::closed);
+    REQUIRE_THROWS_AS(q.push(1), conqueue_error);
+  }
+  SECTION("pop") {
+    error_code ec;
+    REQUIRE_FALSE(q.pop(ec));
+    REQUIRE(ec == conqueue_errc::closed);
+    REQUIRE_THROWS_AS(q.pop(), conqueue_error);
+  }
+}
+
+TEST_CASE("pull from closed") {
+  buffer_queue<int> q(2);
+  q.push(1);
+  q.push(2);
+  q.close();
+  REQUIRE(q.pop() == 1);
+  REQUIRE(q.pop() == 2);
+  error_code ec;
+  REQUIRE_FALSE(q.pop(ec));
+  REQUIRE(ec == conqueue_errc::closed);
+  REQUIRE_THROWS_AS(q.pop(), conqueue_error);
+}
+
+TEST_CASE("blocking pull then closed") {
+  buffer_queue<int> q(2);
+  thread t([&q] {
+    this_thread::sleep_for(10ms);
+    q.push(1);
+    q.close();
+  });
+
+  // Make sure that the queue is empty.
+  std::error_code ec;
+  REQUIRE_FALSE(q.try_pop());
+  REQUIRE_FALSE(q.try_pop(ec));
+  REQUIRE(ec == conqueue_errc::empty);
+
+  REQUIRE(q.pop() == 1);
+  REQUIRE_THROWS_AS(q.pop(), conqueue_error);
+  t.join();
 }
 
 #if 0

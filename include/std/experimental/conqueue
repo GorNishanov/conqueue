@@ -83,30 +83,32 @@ template <typename T> class buffer_queue {
     void wait() noexcept { flag.wait(false); }
   };
 
+  std::optional<T> locked_pop(unique_lock<mutex> &lock, error_code &ec);
+  bool locked_push(unique_lock<mutex> &lock, T &value, error_code &ec);
+
 public:
   typedef T value_type;
   explicit buffer_queue(size_t max_elems);
   template <typename Iter>
   buffer_queue(size_t max_elems, Iter first, Iter last);
   ~buffer_queue() noexcept;
-
   void close() noexcept;
 
   T pop();
   std::optional<T> pop(std::error_code &ec);
   std::optional<T> try_pop();
-  std::optional<T> try_pop(T &, std::error_code &ec);
+  std::optional<T> try_pop(std::error_code &ec);
 
   pop_sender async_pop() noexcept;
 
   // For expediency push(T&&) and push(T const&) were collapsed into
-  // push(T). Later we can split them up.
+  // push(T). Real implementation can split them up.
 
   void push(T x);
   bool push(T x, error_code &ec);
   push_sender async_push(T x);
-  bool try_push(const T &x);
-  bool try_push(const T &x, error_code &ec);
+  bool try_push(T x);
+  bool try_push(T x, error_code &ec);
 
 private:
   std::mutex mutex;
@@ -125,22 +127,65 @@ buffer_queue<T>::buffer_queue(size_t max_elems) : limit(max_elems) {}
 
 template <typename T> buffer_queue<T>::~buffer_queue() noexcept { close(); }
 
+template <typename T> std::optional<T> buffer_queue<T>::try_pop() {
+  std::error_code ec;
+  return try_pop(ec);
+}
+
+template <typename T> bool buffer_queue<T>::try_push(T value) {
+  std::error_code ec;
+  return try_push(value, ec);
+}
+
 template <typename T> void buffer_queue<T>::close() noexcept {
-  // TODO: Complete all pending operations with error closed.
-#if 0
   std::unique_lock lock(mutex);
   if (closed)
     return;
   closed = true;
   while (!waiters.empty()) {
     auto *waiter = waiters.pop_front();
-    // TODO: set error
+    waiter->value = conqueue_errc::closed;
     lock.unlock();
     waiter->complete(waiter);
     lock.lock();
   }
-#endif
 }
+
+template <typename T>
+bool buffer_queue<T>::locked_push(unique_lock<std::mutex> &lock, T &value,
+                                  error_code &ec) {
+  // The caller acquired the lock and verified that the queue is not full.
+  ec = {};
+
+  // See if there are any waiters, if so, pass the value directly to them.
+  if (!waiters.empty()) {
+    auto *waiter = waiters.pop_front();
+    waiter->value = std::move(value);
+    lock.unlock();
+    waiter->complete(waiter);
+    return true;
+  }
+
+  queue.push_back(std::move(value));
+  --limit;
+  return true;
+}
+
+template <typename T> bool buffer_queue<T>::try_push(T x, error_code &ec) {
+  std::unique_lock lock(mutex);
+  if (closed) {
+    ec = conqueue_errc::closed;
+    return false;
+  }
+
+  if (limit == 0) {
+    ec = conqueue_errc::full;
+    return false;
+  }
+
+  return locked_push(lock, x, ec);
+}
+
 template <typename T> bool buffer_queue<T>::push(T x, error_code &ec) {
   std::unique_lock lock(mutex);
   if (closed) {
@@ -237,29 +282,11 @@ buffer_queue<T>::push_sender buffer_queue<T>::async_push(T x) {
   return {this, std::move(x)};
 }
 #endif
-template <typename T> optional<T> buffer_queue<T>::pop(error_code &ec) {
-  std::unique_lock lock(mutex);
-  if (closed) {
-    ec = conqueue_errc::closed;
-    return nullopt;
-  }
 
-  // If the queue is empty, wait for a value to be pushed.
-  if (queue.empty()) {
-    sync_waiter waiter;
-    printf("pop: queue is empty, putting %p in the waiters queue\n", &waiter);
-    waiters.push_back(&waiter);
-    lock.unlock();
-    waiter.wait();
-    printf("pop: %p was just resumed\n", &waiter);
-    if (auto *errc = get_if<conqueue_errc>(&waiter.value)) {
-      ec = *errc;
-      return nullopt;
-    }
-    ec = {};
-    return get<T>(waiter.value);
-  }
-
+template <typename T>
+optional<T> buffer_queue<T>::locked_pop(unique_lock<std::mutex> &lock,
+                                        error_code &ec) {
+  // The caller already verified that the queue is not empty.
   ec = {};
   T result = std::move(queue.front());
   queue.pop_front();
@@ -276,6 +303,46 @@ template <typename T> optional<T> buffer_queue<T>::pop(error_code &ec) {
 
   ++limit;
   return result;
+}
+
+template <typename T>
+optional<T> buffer_queue<T>::try_pop(std::error_code &ec) {
+  std::unique_lock lock(mutex);
+
+  // If the queue is empty, wait for a value to be pushed.
+  if (queue.empty()) {
+    ec = closed ? conqueue_errc::closed : conqueue_errc::empty;
+    return nullopt;
+  }
+
+  return locked_pop(lock, ec);
+}
+
+template <typename T> optional<T> buffer_queue<T>::pop(error_code &ec) {
+  std::unique_lock lock(mutex);
+
+  // If the queue is empty, wait for a value to be pushed.
+  if (queue.empty()) {
+    // Unless, of course, the queue is closed, then return an error.
+    if (closed) {
+      ec = conqueue_errc::closed;
+      return nullopt;
+    }
+    sync_waiter waiter;
+    printf("pop: queue is empty, putting %p in the waiters queue\n", &waiter);
+    waiters.push_back(&waiter);
+    lock.unlock();
+    waiter.wait();
+    printf("pop: %p was just resumed\n", &waiter);
+    if (auto *errc = get_if<conqueue_errc>(&waiter.value)) {
+      ec = *errc;
+      return nullopt;
+    }
+    ec = {};
+    return get<T>(waiter.value);
+  }
+
+  return locked_pop(lock, ec);
 }
 
 template <typename T> T buffer_queue<T>::pop() {
