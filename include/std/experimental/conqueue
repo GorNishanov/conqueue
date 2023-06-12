@@ -7,6 +7,7 @@
 #include <cstdio>
 #include <deque>
 #include <mutex>
+#include <optional>
 #include <stdio.h>
 #include <system_error>
 #include <variant>
@@ -85,9 +86,11 @@ public:
   void close() noexcept;
 
   T pop();
+  std::optional<T> pop(std::error_code &ec);
+  std::optional<T> try_pop();
+  std::optional<T> try_pop(T &, std::error_code &ec);
+
   pop_sender async_pop() noexcept;
-  bool try_pop(T &);
-  bool try_pop(T &, std::error_code &ec);
 
   // For expediency push(T&&) and push(T const&) were collapsed into
   // push(T). Later we can split them up.
@@ -144,6 +147,7 @@ template <typename T> struct buffer_queue<T>::push_sender {
   using is_sender = void;
   using completion_signatures =
       stdexec::completion_signatures<stdexec::set_value_t()>;
+
   struct __env {
 
     friend exec::inline_scheduler
@@ -158,20 +162,20 @@ template <typename T> struct buffer_queue<T>::push_sender {
     return {};
   }
 
-  template <typename Receiver> struct push_operation : waiter_base {
+  template <typename Receiver> struct operation : waiter_base {
     push_sender sender;
     Receiver receiver;
 
-    push_operation(push_sender &&sender, Receiver &&receiver)
+    operation(push_sender &&sender, Receiver &&receiver)
         : sender(std::move(sender)), receiver(std::move(receiver)) {
       this->value_ptr = std::addressof(sender.value);
       this->__complete = [](waiter_base *w) noexcept {
-        auto *self = static_cast<push_operation *>(w);
+        auto *self = static_cast<operation *>(w);
         stdexec::set_value((Receiver &&)self->receiver);
       };
     }
 
-    friend void tag_invoke(stdexec::start_t, push_operation &op) noexcept {
+    friend void tag_invoke(stdexec::start_t, operation &op) noexcept {
       auto &self = *op.sender.queue;
       std::unique_lock lock(self.mutex);
       if (self.limit == 0) {
@@ -200,7 +204,7 @@ template <typename T> struct buffer_queue<T>::push_sender {
 
   template <stdexec::receiver Receiver>
   friend auto tag_invoke(stdexec::connect_t, push_sender &&s, Receiver &&r)
-      -> push_operation<Receiver> {
+      -> operation<Receiver> {
     return {std::move(s), std::forward<Receiver>(r)};
   }
 };
@@ -210,7 +214,6 @@ buffer_queue<T>::push_sender buffer_queue<T>::async_push(T x) {
   return {this, std::move(x)};
 }
 
-// implement pop
 template <typename T> T buffer_queue<T>::pop() {
   T result; // TODO: mess with __manual_lifetime
   std::unique_lock lock(mutex);
@@ -240,6 +243,83 @@ template <typename T> T buffer_queue<T>::pop() {
 
   ++limit;
   return result;
+}
+
+template <typename T> struct buffer_queue<T>::pop_sender {
+  buffer_queue *queue;
+
+  using is_sender = void;
+  using completion_signatures =
+      stdexec::completion_signatures<stdexec::set_value_t(T)>;
+
+  struct __env {
+
+    friend exec::inline_scheduler
+    tag_invoke(stdexec::get_completion_scheduler_t<stdexec::set_value_t>,
+               const __env &) //
+        noexcept {
+      return {};
+    }
+  };
+
+  friend __env tag_invoke(stdexec::get_env_t, const pop_sender &) noexcept {
+    return {};
+  }
+
+  template <typename Receiver> struct operation : waiter_base {
+    buffer_queue &queue;
+    Receiver receiver;
+    T value;
+
+    operation(buffer_queue &queue, Receiver &&receiver)
+        : queue(queue), receiver(std::move(receiver)) {
+      this->value_ptr = std::addressof(value);
+      this->__complete = [](waiter_base *w) noexcept {
+        auto *self = static_cast<operation *>(w);
+        stdexec::set_value((Receiver &&)self->receiver, std::move(self->value));
+      };
+    }
+
+    friend void tag_invoke(stdexec::start_t, operation &op) noexcept {
+      auto &self = op.queue;
+      std::unique_lock lock(self.mutex);
+      // If the queue is empty, add ourselves to the waiters.
+      if (self.queue.empty()) {
+        printf("async_pop: queue is empty, putting %p in the waiters queue\n",
+               &op);
+        self.waiters.push_back(&op);
+        return;
+      }
+
+      op.value = std::move(self.queue.front());
+      self.queue.pop_front();
+
+      // See if there are any waiters
+      if (!self.waiters.empty()) {
+        auto *waiter = self.waiters.pop_front();
+        self.queue.push_back(std::move(*waiter->value_ptr));
+        lock.unlock();
+        printf("async_pop: unlocking pusher %p\n", waiter);
+        waiter->__complete(waiter);
+      } else {
+        ++self.limit;
+        lock.unlock();
+      }
+
+      stdexec::set_value((Receiver &&)op.receiver, std::move(op.value));
+    }
+  };
+
+  template <stdexec::receiver Receiver>
+  friend auto tag_invoke(stdexec::connect_t, pop_sender &&s, Receiver &&r)
+      -> operation<Receiver> {
+    return {*s.queue, std::forward<Receiver>(r)};
+  }
+};
+
+template <typename T>
+buffer_queue<T>::pop_sender buffer_queue<T>::async_pop() noexcept {
+  return {this};
 }
 
 } // namespace std::experimental
