@@ -19,7 +19,7 @@
 #include <exec/__detail/__manual_lifetime.hpp>
 
 namespace std::experimental {
-enum class conqueue_errc { empty = 1, full, closed };
+enum class conqueue_errc { success, empty, full, closed };
 }
 
 namespace std {
@@ -29,21 +29,27 @@ struct is_error_code_enum<experimental::conqueue_errc> : public true_type {};
 
 namespace std::experimental {
 
-error_code make_error_code(conqueue_errc e) noexcept;
-error_condition make_error_condition(conqueue_errc e) noexcept;
-
 const error_category &conqueue_category() noexcept;
 
-class conqueue_error : public logic_error {
+inline error_code make_error_code(conqueue_errc e) noexcept {
+  return {static_cast<int>(e), conqueue_category()};
+}
+
+inline error_condition make_error_condition(conqueue_errc e) noexcept {
+  return {static_cast<int>(e), conqueue_category()};
+}
+
+class conqueue_error : public runtime_error {
+  error_code ec;
+
 public:
-  conqueue_error(error_code ec);
-  explicit conqueue_error(conqueue_errc);
-  const error_code &code() const noexcept;
-  const char *what() const noexcept;
+  explicit conqueue_error(const std::error_code &ec);
+  ~conqueue_error() noexcept;
+  const error_code &code() const noexcept { return ec; }
 };
 
-// Inspired by https://wg21.link/P0260R5 A proposal to add a concurrent queue to
-// the standard library and https://wg21.link/p1958 A proposal to add a
+// Inspired by https://wg21.link/P0260R5 A proposal to add a concurrent queue
+// to the standard library and https://wg21.link/p1958 A proposal to add a
 // concurrent queue to the standard library
 
 template <typename T> class buffer_queue {
@@ -56,22 +62,23 @@ template <typename T> class buffer_queue {
 
   struct waiter_base {
     waiter_base *next{};
-    T *value_ptr{};
-    void (*__complete)(waiter_base *) noexcept;
+    variant<monostate, conqueue_errc, T, T *> value;
+    void (*complete)(waiter_base *) noexcept;
   };
 
   struct sync_waiter : waiter_base {
     std::atomic_flag flag;
 
-    sync_waiter(T &x) noexcept {
-      this->value_ptr = std::addressof(x);
-      this->__complete = [](waiter_base *w) noexcept {
+    sync_waiter() noexcept {
+      this->complete = [](waiter_base *w) noexcept {
         auto *self = static_cast<sync_waiter *>(w);
         printf("notifying sync waiter %p\n", w);
         self->flag.test_and_set();
         self->flag.notify_one();
       };
     }
+
+    sync_waiter(T &x) noexcept { this->value = std::addressof(x); }
 
     void wait() noexcept { flag.wait(false); }
   };
@@ -96,9 +103,10 @@ public:
   // push(T). Later we can split them up.
 
   void push(T x);
+  bool push(T x, error_code &ec);
   push_sender async_push(T x);
   bool try_push(const T &x);
-  bool try_push(const T &x, std::error_code &ec);
+  bool try_push(const T &x, error_code &ec);
 
 private:
   std::mutex mutex;
@@ -128,32 +136,47 @@ template <typename T> void buffer_queue<T>::close() noexcept {
     auto *waiter = waiters.pop_front();
     // TODO: set error
     lock.unlock();
-    waiter->__complete(waiter);
+    waiter->complete(waiter);
     lock.lock();
   }
 #endif
 }
-
-template <typename T> void buffer_queue<T>::push(T x) {
+template <typename T> bool buffer_queue<T>::push(T x, error_code &ec) {
   std::unique_lock lock(mutex);
+  if (closed) {
+    ec = conqueue_errc::closed;
+    return false;
+  }
+  ec = {}; // From this point on, we will not fail.
+
   if (limit == 0) {
     sync_waiter waiter(x);
     waiters.push_back(&waiter);
     lock.unlock();
-    return waiter.wait(); // TODO: Check queue closed error and throw.
+    waiter.wait();
+    return true;
   }
+
   // See if there are any waiters, if so, pass the value directly to them.
   if (!waiters.empty()) {
     auto *waiter = waiters.pop_front();
-    *waiter->value_ptr = std::move(x); // TODO: Mess with __manual_lifetime.
+    waiter->value = std::move(x);
     lock.unlock();
-    waiter->__complete(waiter);
-    return;
+    waiter->complete(waiter);
+    return true;
   }
+
   queue.push_back(std::move(x));
   --limit;
+  return true;
 }
 
+template <typename T> void buffer_queue<T>::push(T x) {
+  error_code ec;
+  if (!push(std::move(x), ec))
+    throw conqueue_error(ec);
+}
+#if 0
 template <typename T> struct buffer_queue<T>::push_sender {
   buffer_queue *queue;
   T value;
@@ -169,7 +192,7 @@ template <typename T> struct buffer_queue<T>::push_sender {
     operation(push_sender &&sender, Receiver &&receiver)
         : sender(std::move(sender)), receiver(std::move(receiver)) {
       this->value_ptr = std::addressof(sender.value);
-      this->__complete = [](waiter_base *w) noexcept {
+      this->complete = [](waiter_base *w) noexcept {
         auto *self = static_cast<operation *>(w);
         stdexec::set_value((Receiver &&)self->receiver);
       };
@@ -191,7 +214,7 @@ template <typename T> struct buffer_queue<T>::push_sender {
             std::move(op.sender.value); // TODO: Mess with __manual_lifetime.
         lock.unlock();
         printf("async push: unlocking reader %p\n", waiter);
-        waiter->__complete(waiter);
+        waiter->complete(waiter);
       } else {
         printf("async push: queue is not full, pushing value %d\n",
                op.sender.value);
@@ -213,38 +236,41 @@ template <typename T>
 buffer_queue<T>::push_sender buffer_queue<T>::async_push(T x) {
   return {this, std::move(x)};
 }
-
+#endif
 template <typename T> T buffer_queue<T>::pop() {
-  T result; // TODO: mess with __manual_lifetime
   std::unique_lock lock(mutex);
 
   // If the queue is empty, wait for a value to be pushed.
   if (queue.empty()) {
-    sync_waiter waiter(result);
+    sync_waiter waiter;
     printf("pull: queue is empty, putting %p in the waiters queue\n", &waiter);
     waiters.push_back(&waiter);
     lock.unlock();
     waiter.wait(); // TODO: Check for queue closed error and throw.
+    if (auto *errc = get_if<conqueue_errc>(&waiter.value))
+      throw conqueue_error(*errc);
+
     printf("pull: %p was just resumed\n", &waiter);
-    return result;
+    return get<T>(waiter.value);
   }
-  result = std::move(queue.front());
+
+  T result = std::move(queue.front());
   queue.pop_front();
 
   // See if there are any waiters
   if (!waiters.empty()) {
     auto *waiter = waiters.pop_front();
-    queue.push_back(std::move(*waiter->value_ptr));
+    queue.push_back(std::move(*get<T *>(waiter->value)));
     lock.unlock();
     printf("unlocking pusher %p\n", waiter);
-    waiter->__complete(waiter);
+    waiter->complete(waiter);
     return result;
   }
 
   ++limit;
   return result;
 }
-
+#if 0
 template <typename T> struct buffer_queue<T>::pop_sender {
   buffer_queue *queue;
 
@@ -260,7 +286,7 @@ template <typename T> struct buffer_queue<T>::pop_sender {
     operation(buffer_queue &queue, Receiver &&receiver)
         : queue(queue), receiver(std::move(receiver)) {
       this->value_ptr = std::addressof(value);
-      this->__complete = [](waiter_base *w) noexcept {
+      this->complete = [](waiter_base *w) noexcept {
         auto *self = static_cast<operation *>(w);
         stdexec::set_value((Receiver &&)self->receiver, std::move(self->value));
       };
@@ -286,7 +312,7 @@ template <typename T> struct buffer_queue<T>::pop_sender {
         self.queue.push_back(std::move(*waiter->value_ptr));
         lock.unlock();
         printf("async_pop: unlocking pusher %p\n", waiter);
-        waiter->__complete(waiter);
+        waiter->complete(waiter);
       } else {
         ++self.limit;
         lock.unlock();
@@ -307,7 +333,7 @@ template <typename T>
 buffer_queue<T>::pop_sender buffer_queue<T>::async_pop() noexcept {
   return {this};
 }
-
+#endif
 } // namespace std::experimental
 
 #endif // _STD_EXPERIMENTAL_CONQUEUE

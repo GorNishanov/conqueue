@@ -15,16 +15,16 @@ add_subdirectory(dependencies)
 add_compile_options(-Werror)
 
 # Define the main library
-add_library(conqueue INTERFACE)
+add_library(conqueue STATIC src/conqueue.cpp)
 
 # Declare the public include directories
 include(GNUInstallDirs)
-target_include_directories(conqueue INTERFACE
+target_include_directories(conqueue PUBLIC
                            $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include/>
                            $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
                            )
 
-target_link_libraries(conqueue INTERFACE stdexec)
+target_link_libraries(conqueue PUBLIC stdexec)
 
 # Use C++20 standard
 target_compile_features(conqueue INTERFACE cxx_std_20)

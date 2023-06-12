@@ -22,6 +22,7 @@ TEST_CASE("smoketest", "[smoketest]") {
   REQUIRE(q.pop() == 2);
 }
 
+#if 0
 exec::task<void> coro_push(buffer_queue<int> &q) {
   co_await q.async_push(3);
   co_await q.async_push(4);
@@ -65,3 +66,4 @@ TEST_CASE("coro_pop") {
 
   stdexec::sync_wait(scope.on_empty());
 }
+#endif
