@@ -103,6 +103,7 @@ public:
 private:
   std::mutex mutex;
   size_t limit;
+  bool closed{};
   std::deque<T> queue; // TODO: replace with a fixed size circular buffer.
   // If the queue is empty, waiters are the readers.
   // If the queue is full, waiters are the writers.
@@ -118,6 +119,19 @@ template <typename T> buffer_queue<T>::~buffer_queue() noexcept { close(); }
 
 template <typename T> void buffer_queue<T>::close() noexcept {
   // TODO: Complete all pending operations with error closed.
+#if 0
+  std::unique_lock lock(mutex);
+  if (closed)
+    return;
+  closed = true;
+  while (!waiters.empty()) {
+    auto *waiter = waiters.pop_front();
+    // TODO: set error
+    lock.unlock();
+    waiter->__complete(waiter);
+    lock.lock();
+  }
+#endif
 }
 
 template <typename T> void buffer_queue<T>::push(T x) {
