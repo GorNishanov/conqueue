@@ -237,27 +237,34 @@ buffer_queue<T>::push_sender buffer_queue<T>::async_push(T x) {
   return {this, std::move(x)};
 }
 #endif
-template <typename T> T buffer_queue<T>::pop() {
+template <typename T> optional<T> buffer_queue<T>::pop(error_code &ec) {
   std::unique_lock lock(mutex);
+  if (closed) {
+    ec = conqueue_errc::closed;
+    return nullopt;
+  }
 
   // If the queue is empty, wait for a value to be pushed.
   if (queue.empty()) {
     sync_waiter waiter;
-    printf("pull: queue is empty, putting %p in the waiters queue\n", &waiter);
+    printf("pop: queue is empty, putting %p in the waiters queue\n", &waiter);
     waiters.push_back(&waiter);
     lock.unlock();
-    waiter.wait(); // TODO: Check for queue closed error and throw.
-    if (auto *errc = get_if<conqueue_errc>(&waiter.value))
-      throw conqueue_error(*errc);
-
-    printf("pull: %p was just resumed\n", &waiter);
+    waiter.wait();
+    printf("pop: %p was just resumed\n", &waiter);
+    if (auto *errc = get_if<conqueue_errc>(&waiter.value)) {
+      ec = *errc;
+      return nullopt;
+    }
+    ec = {};
     return get<T>(waiter.value);
   }
 
+  ec = {};
   T result = std::move(queue.front());
   queue.pop_front();
 
-  // See if there are any waiters
+  // See if there are any waiters that can be resumed now.
   if (!waiters.empty()) {
     auto *waiter = waiters.pop_front();
     queue.push_back(std::move(*get<T *>(waiter->value)));
@@ -269,6 +276,14 @@ template <typename T> T buffer_queue<T>::pop() {
 
   ++limit;
   return result;
+}
+
+template <typename T> T buffer_queue<T>::pop() {
+  std::error_code ec;
+  if (auto result = pop(ec))
+    return *result;
+
+  throw conqueue_error(ec);
 }
 #if 0
 template <typename T> struct buffer_queue<T>::pop_sender {
