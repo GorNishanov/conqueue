@@ -148,20 +148,6 @@ template <typename T> struct buffer_queue<T>::push_sender {
   using completion_signatures =
       stdexec::completion_signatures<stdexec::set_value_t()>;
 
-  struct __env {
-
-    friend exec::inline_scheduler
-    tag_invoke(stdexec::get_completion_scheduler_t<stdexec::set_value_t>,
-               const __env &) //
-        noexcept {
-      return {};
-    }
-  };
-
-  friend __env tag_invoke(stdexec::get_env_t, const push_sender &) noexcept {
-    return {};
-  }
-
   template <typename Receiver> struct operation : waiter_base {
     push_sender sender;
     Receiver receiver;
@@ -251,20 +237,6 @@ template <typename T> struct buffer_queue<T>::pop_sender {
   using is_sender = void;
   using completion_signatures =
       stdexec::completion_signatures<stdexec::set_value_t(T)>;
-
-  struct __env {
-
-    friend exec::inline_scheduler
-    tag_invoke(stdexec::get_completion_scheduler_t<stdexec::set_value_t>,
-               const __env &) //
-        noexcept {
-      return {};
-    }
-  };
-
-  friend __env tag_invoke(stdexec::get_env_t, const pop_sender &) noexcept {
-    return {};
-  }
 
   template <typename Receiver> struct operation : waiter_base {
     buffer_queue &queue;
