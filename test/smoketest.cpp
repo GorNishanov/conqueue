@@ -6,6 +6,8 @@
 #include <exec/static_thread_pool.hpp>
 #include <exec/task.hpp>
 
+#include <stdexec/execution.hpp>
+
 using namespace std;
 using namespace std::experimental;
 
@@ -30,8 +32,12 @@ TEST_CASE("coro", "[coro]") {
   q.push(1);
   q.push(2);
 
+  scope.spawn(stdexec::on(pool.get_scheduler(), coro(q)));
+
   REQUIRE(q.pop() == 1);
   REQUIRE(q.pop() == 2);
   REQUIRE(q.pop() == 3);
   REQUIRE(q.pop() == 4);
+
+  stdexec::sync_wait(scope.on_empty());
 }

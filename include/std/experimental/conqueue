@@ -4,8 +4,10 @@
 #ifndef _STD_EXPERIMENTAL_CONQUEUE
 #define _STD_EXPERIMENTAL_CONQUEUE
 #include <atomic>
+#include <cstdio>
 #include <deque>
 #include <mutex>
+#include <stdio.h>
 #include <system_error>
 #include <variant>
 
@@ -16,14 +18,7 @@
 #include <exec/__detail/__manual_lifetime.hpp>
 
 namespace std::experimental {
-
-enum class conqueue_errc {
-  future_already_retrieved = 1,
-  promise_already_satisfied,
-  no_state,
-  broken_promise
-};
-
+enum class conqueue_errc { empty = 1, full, closed };
 }
 
 namespace std {
@@ -71,6 +66,8 @@ template <typename T> class buffer_queue {
       this->value_ptr = std::addressof(x);
       this->__complete = [](waiter_base *w) noexcept {
         auto *self = static_cast<sync_waiter *>(w);
+        printf("notifying sync waiter %p\n", w);
+        self->flag.test_and_set();
         self->flag.notify_one();
       };
     }
@@ -175,7 +172,29 @@ template <typename T> struct buffer_queue<T>::push_sender {
     }
 
     friend void tag_invoke(stdexec::start_t, push_operation &op) noexcept {
-      (void)op;
+      auto &self = *op.sender.queue;
+      std::unique_lock lock(self.mutex);
+      if (self.limit == 0) {
+        printf("async_push: queue is full, putting %p in the waiters queue\n",
+               &op);
+        self.waiters.push_back(&op);
+        return;
+      }
+      // See if there are any waiters, if so, pass the value directly to them.
+      if (!self.waiters.empty()) {
+        auto *waiter = self.waiters.pop_front();
+        *waiter->value_ptr =
+            std::move(op.sender.value); // TODO: Mess with __manual_lifetime.
+        lock.unlock();
+        printf("async push: unlocking reader %p\n", waiter);
+        waiter->__complete(waiter);
+      } else {
+        printf("async push: queue is not full, pushing value %d\n",
+               op.sender.value);
+        self.queue.push_back(std::move(op.sender.value));
+        ++self.limit;
+      }
+      stdexec::set_value((Receiver &&)op.receiver);
     }
   };
 
@@ -199,9 +218,11 @@ template <typename T> T buffer_queue<T>::pop() {
   // If the queue is empty, wait for a value to be pushed.
   if (queue.empty()) {
     sync_waiter waiter(result);
+    printf("pull: queue is empty, putting %p in the waiters queue\n", &waiter);
     waiters.push_back(&waiter);
     lock.unlock();
     waiter.wait(); // TODO: Check for queue closed error and throw.
+    printf("pull: %p was just resumed\n", &waiter);
     return result;
   }
   result = std::move(queue.front());
@@ -212,6 +233,7 @@ template <typename T> T buffer_queue<T>::pop() {
     auto *waiter = waiters.pop_front();
     queue.push_back(std::move(*waiter->value_ptr));
     lock.unlock();
+    printf("unlocking pusher %p\n", waiter);
     waiter->__complete(waiter);
     return result;
   }
