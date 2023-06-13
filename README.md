@@ -2,6 +2,9 @@
 
 [![clang-14](https://github.com/GorNishanov/conqueue/actions/workflows/ci.yml/badge.svg)](https://github.com/GorNishanov/conqueue/actions/workflows/ci.yml)
 
+Supporting material for
+paper: [d2912r0: Concurrent queues and sender/receivers](d2912r0.md)
+
 Experimental implementation of concurrent buffer queue with adding sender/receiver based async_pop / async_push to https://wg21.link/p1958r0. Using reference implementation of sender/receiver from https://github.com/NVIDIA/stdexec.
 
 Inspired by
@@ -35,5 +38,3 @@ public:
   bool try_push(T x, error_code &ec);
 };
 ```
-
-Paper: [d2912r0: Concurrent queues and sender/receivers](d2912r0.md)
