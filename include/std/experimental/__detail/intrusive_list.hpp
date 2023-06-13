@@ -119,10 +119,10 @@ public:
   }
 
   // Get the head pointer of the list
-  _Item* head() const { return head_; }
+  _Item* front() const { return head_; }
 
   // Get the tail pointer of the list
-  _Item* tail() const { return tail_; }
+  _Item* back() const { return tail_; }
 
 private:
   // Pointers to the first and last objects of the list
