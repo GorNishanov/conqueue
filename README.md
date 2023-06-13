@@ -17,24 +17,31 @@ Inspired by
 ```c++
 template <typename T> class buffer_queue {
 public:
-  typedef T value_type;
+  using value_type = T;
+
   explicit buffer_queue(size_t max_elems);
   template <typename Iter>
   buffer_queue(size_t max_elems, Iter first, Iter last);
   ~buffer_queue() noexcept;
+
+  // observers
+  bool is_closed() noexcept;
+
+  // modifiers
   void close() noexcept;
 
   pop_sender async_pop() noexcept;
   T pop();
-  std::optional<T> pop(std::error_code &ec);
-  std::optional<T> try_pop(std::error_code &ec);
-
-  // For expediency push(T&&) and push(T const&) were collapsed into
-  // push(T). Real implementation can split them up.
+  std::optional<T> pop(std::error_code& ec);
+  std::optional<T> try_pop(std::error_code& ec);
 
   push_sender async_push(T x) noexcept(is_nothrow_move_constructible_v<T>);
-  void push(T x);
-  bool push(T x, error_code &ec);
-  bool try_push(T x, error_code &ec);
+  void push(const T& x);
+  bool push(const T& x, error_code& ec); // used to be wait_push
+  bool try_push(const T& x, error_code& ec);
+
+  void push(T&& x);
+  bool push(T&& x, error_code& ec); // used to be wait_push
+  bool try_push(T&& x, error_code& ec);
 };
 ```
