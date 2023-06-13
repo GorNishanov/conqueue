@@ -34,7 +34,9 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt update  # ensure indexes are up-to-date
-          sudo apt install ccache ninja-build wget lsb-release software-properties-common gpg-agent
+          sudo apt install ccache ninja-build
+
+      # wget lsb-release software-properties-common gpg-agent
 
       #   - name: Install clang-16
       #     run: |
@@ -68,7 +70,7 @@ jobs:
           ccache -s
           mkdir build
           cd build
-          cmake -G Ninja .. -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+          cmake -G Ninja .. -DCMAKE_CXX_COMPILER=clang++-14 -DCMAKE_C_COMPILER=clang-14 -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
 
       - name: Build
         run: |
