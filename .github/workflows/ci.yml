@@ -36,9 +36,9 @@ jobs:
           sudo apt update  # ensure indexes are up-to-date
           sudo apt install ccache ninja-build wget lsb-release software-properties-common gpg-agent
 
-      - name: Install clang-16
-        run: |
-          sudo bash -c "$(wget -O - https://apt.llvm.org/llvm.sh)" bash 16 all
+      #   - name: Install clang-16
+      #     run: |
+      #       sudo bash -c "$(wget -O - https://apt.llvm.org/llvm.sh)" bash 16 all
 
       - name: Get date for ccache
         id: get-date
@@ -68,7 +68,7 @@ jobs:
           ccache -s
           mkdir build
           cd build
-          cmake -G Ninja .. -DCMAKE_CXX_COMPILER=clang++-16 -DCMAKE_C_COMPILER=clang-16 -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+          cmake -G Ninja .. -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
 
       - name: Build
         run: |
