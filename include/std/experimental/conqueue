@@ -3,8 +3,9 @@
 
 #ifndef _STD_EXPERIMENTAL_CONQUEUE
 #define _STD_EXPERIMENTAL_CONQUEUE
+#include "__detail/tracing.hpp"
+
 #include <atomic>
-#include <cstdio>
 #include <deque>
 #include <exception>
 #include <mutex>
@@ -76,7 +77,9 @@ template <typename T> class buffer_queue {
         return *std::get<T*>(value);
     }
 
-    ~waiter_base() noexcept { printf("waiter_base: destroying %p\n", this); }
+    ~waiter_base() noexcept {
+      STDEX_CONQUEUE_LOG("waiter_base: destroying %p\n", this);
+    }
   };
 
   struct blocking_waiter;
@@ -182,7 +185,7 @@ template <typename T> struct buffer_queue<T>::blocking_waiter : waiter_base {
   blocking_waiter() noexcept {
     this->complete = [](waiter_base* w) noexcept {
       auto* self = static_cast<blocking_waiter*>(w);
-      printf("notifying sync waiter %p\n", w);
+      STDEX_CONQUEUE_LOG("notifying sync waiter %p\n", w);
       self->flag.test_and_set();
       self->flag.notify_one();
     };
@@ -204,11 +207,12 @@ template <typename T> bool buffer_queue<T>::push(T x, error_code& ec) {
 
   if (limit == 0) {
     blocking_waiter waiter(x);
-    printf("push: queue is full, putting %p in the waiters queue\n", &waiter);
+    STDEX_CONQUEUE_LOG("push: queue is full, putting %p in the waiters queue\n",
+                       &waiter);
     waiters.push_back(&waiter);
     lock.unlock();
     waiter.wait();
-    printf("push: was resumed %p\n", &waiter);
+    STDEX_CONQUEUE_LOG("push: was resumed %p\n", &waiter);
     // Queue got closed while we were waiting.
     if (auto* errc = get_if<conqueue_errc>(&waiter.value)) {
       ec = *errc;
@@ -265,8 +269,9 @@ template <typename T> struct buffer_queue<T>::push_sender {
         return;
       }
       if (self.limit == 0) {
-        printf("async_push: queue is full, putting %p in the waiters queue\n",
-               &op);
+        STDEX_CONQUEUE_LOG(
+            "async_push: queue is full, putting %p in the waiters queue\n",
+            &op);
         self.waiters.push_back(&op);
         return;
       }
@@ -275,11 +280,11 @@ template <typename T> struct buffer_queue<T>::push_sender {
         auto* waiter = self.waiters.pop_front();
         waiter->value = &op.sender.value;
         lock.unlock();
-        printf("async push: unlocking reader %p\n", waiter);
+        STDEX_CONQUEUE_LOG("async push: unlocking reader %p\n", waiter);
         waiter->complete(waiter);
       } else {
-        printf("async push: queue is not full, pushing value %d\n",
-               op.sender.value);
+        STDEX_CONQUEUE_LOG("async push: queue is not full, pushing value %d\n",
+                           op.sender.value);
         self.queue.push_back(std::move(op.sender.value));
         ++self.limit;
       }
@@ -315,7 +320,7 @@ optional<T> buffer_queue<T>::locked_pop(unique_lock<std::mutex>& lock,
     auto* waiter = waiters.pop_front();
     queue.push_back(std::move(waiter->get_value()));
     lock.unlock();
-    printf("unlocking pusher %p\n", waiter);
+    STDEX_CONQUEUE_LOG("unlocking pusher %p\n", waiter);
     waiter->complete(waiter);
     return result;
   }
@@ -348,11 +353,12 @@ template <typename T> optional<T> buffer_queue<T>::pop(error_code& ec) {
       return nullopt;
     }
     blocking_waiter waiter;
-    printf("pop: queue is empty, putting %p in the waiters queue\n", &waiter);
+    STDEX_CONQUEUE_LOG("pop: queue is empty, putting %p in the waiters queue\n",
+                       &waiter);
     waiters.push_back(&waiter);
     lock.unlock();
     waiter.wait();
-    printf("pop: %p was just resumed\n", &waiter);
+    STDEX_CONQUEUE_LOG("pop: %p was just resumed\n", &waiter);
     if (auto* errc = get_if<conqueue_errc>(&waiter.value)) {
       ec = *errc;
       return nullopt;
@@ -412,8 +418,9 @@ template <typename T> struct buffer_queue<T>::pop_sender {
           return;
         }
 
-        printf("async_pop: queue is empty, putting %p in the waiters queue\n",
-               &op);
+        STDEX_CONQUEUE_LOG(
+            "async_pop: queue is empty, putting %p in the waiters queue\n",
+            &op);
         self.waiters.push_back(&op);
         return;
       }
@@ -428,7 +435,7 @@ template <typename T> struct buffer_queue<T>::pop_sender {
         auto* waiter = self.waiters.pop_front();
         self.queue.push_back(std::move(waiter->get_value()));
         lock.unlock();
-        printf("async_pop: unlocking pusher %p\n", waiter);
+        STDEX_CONQUEUE_LOG("async_pop: unlocking pusher %p\n", waiter);
         waiter->complete(waiter);
       } else {
         ++self.limit;
