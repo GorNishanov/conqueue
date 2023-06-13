@@ -35,3 +35,5 @@ public:
   bool try_push(T x, error_code &ec);
 };
 ```
+
+Paper: [d2912r0: Concurrent queues and sender/receivers](d2912r0.md)
