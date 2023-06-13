@@ -465,7 +465,7 @@ template <typename T> struct buffer_queue<T>::pop_sender {
 
 template <typename T>
 typename buffer_queue<T>::pop_sender buffer_queue<T>::async_pop() noexcept {
-  return {this};
+  return {this}; // test
 }
 } // namespace std::experimental
 
