@@ -9,6 +9,7 @@ Inspired by
 - https://wg21.link/p0260r5 A proposal to add a concurrent queue
   to the standard library and
 - https://wg21.link/p1958r0 C++ Concurrent Buffer Queue
+- https://wg21.link/p2882r0 An Event Model for C++ Executors
 
 ```c++
 template <typename T> class buffer_queue {
