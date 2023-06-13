@@ -14,7 +14,7 @@
 #include <system_error>
 #include <variant>
 
-#include <stdexec/__detail/__intrusive_queue.hpp>
+#include <std/experimental/__detail/intrusive_list.hpp>
 #include <stdexec/execution.hpp>
 
 namespace std::experimental {
@@ -61,7 +61,7 @@ template <typename T> class buffer_queue {
   struct push_sender;
 
   struct waiter_base {
-    waiter_base* next{};
+    waiter_base *prev{}, *next{};
     // For push case, we store the pointer to the value to be pushed.
     // For pop case, we store the value.
     variant<monostate, conqueue_errc, T, T*> value;
@@ -120,7 +120,7 @@ private:
   std::deque<T> queue; // TODO: replace with a fixed size circular buffer.
   // If the queue is empty, waiters are the readers.
   // If the queue is full, waiters are the writers.
-  stdexec::__intrusive_queue<&waiter_base::next> waiters;
+  __detail::intrusive_list<&waiter_base::prev, &waiter_base::next> waiters;
 };
 
 // Implementation
