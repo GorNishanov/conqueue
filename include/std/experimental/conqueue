@@ -68,7 +68,7 @@ template <typename T> class buffer_queue {
 
     T& get_value() noexcept {
       // pre: user already verified that the value does not contain the error.
-      // pre: by construcion, it should not be a monostate by the point we get
+      // pre: by construction, it should not be a monostate by the point we get
       // here.
       if (T* v = get_if<T>(&value))
         return *v;
@@ -90,6 +90,11 @@ public:
   template <typename Iter>
   buffer_queue(size_t max_elems, Iter first, Iter last);
   ~buffer_queue() noexcept;
+
+  // observers
+  bool is_closed() noexcept { return closed; }
+
+  // modifiers
   void close() noexcept;
 
   pop_sender async_pop() noexcept;
@@ -213,20 +218,7 @@ template <typename T> bool buffer_queue<T>::push(T x, error_code& ec) {
     return true;
   }
 
-  ec = {}; // From this point on, we will not fail.
-
-  // See if there are any waiters, if so, pass the value directly to them.
-  if (!waiters.empty()) {
-    auto* waiter = waiters.pop_front();
-    waiter->value = std::move(x);
-    lock.unlock();
-    waiter->complete(waiter);
-    return true;
-  }
-
-  queue.push_back(std::move(x));
-  --limit;
-  return true;
+  return locked_push(lock, x, ec);
 }
 
 template <typename T> void buffer_queue<T>::push(T x) {

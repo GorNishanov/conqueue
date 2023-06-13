@@ -20,6 +20,7 @@ using stdexec::on;
 
 TEST_CASE("smoketest", "[smoketest]") {
   buffer_queue<int> q(2);
+  REQUIRE_FALSE(q.is_closed());
   q.push(1);
   q.push(2);
   std::error_code ec;
@@ -32,7 +33,9 @@ TEST_CASE("smoketest", "[smoketest]") {
 
 TEST_CASE("initally closed test") {
   buffer_queue<int> q(2);
+  REQUIRE_FALSE(q.is_closed());
   q.close();
+  REQUIRE(q.is_closed());
   SECTION("push") {
     error_code ec;
     REQUIRE_FALSE(q.push(1, ec));
@@ -78,7 +81,7 @@ TEST_CASE("blocking pull then closed") {
   t.join();
 }
 
-exec::task<void> coro_push(buffer_queue<int> &q) {
+exec::task<void> coro_push(buffer_queue<int>& q) {
   co_await q.async_push(3);
   co_await q.async_push(4);
 }
@@ -100,7 +103,7 @@ TEST_CASE("coro_push") {
   stdexec::sync_wait(scope.on_empty());
 }
 
-exec::task<void> coro_pop(buffer_queue<int> &q) {
+exec::task<void> coro_pop(buffer_queue<int>& q) {
   REQUIRE(co_await q.async_pop() == 1);
   REQUIRE(co_await q.async_pop() == 2);
   REQUIRE(co_await q.async_pop() == 3);
