@@ -312,7 +312,7 @@ template <typename T> struct buffer_queue<T>::push_sender {
 };
 
 template <typename T>
-buffer_queue<T>::push_sender
+typename buffer_queue<T>::push_sender
 buffer_queue<T>::async_push(T x) noexcept(is_nothrow_move_constructible_v<T>) {
   return {this, std::move(x)};
 }
@@ -464,7 +464,7 @@ template <typename T> struct buffer_queue<T>::pop_sender {
 };
 
 template <typename T>
-buffer_queue<T>::pop_sender buffer_queue<T>::async_pop() noexcept {
+typename buffer_queue<T>::pop_sender buffer_queue<T>::async_pop() noexcept {
   return {this};
 }
 } // namespace std::experimental
