@@ -1,0 +1,57 @@
+name: Infinity Native Transpiler
+
+on:
+  push:
+    paths-ignore:
+      - '.vscode/**'
+      - '**/*.md'
+      - '**/*.html'
+    branches:
+      - main
+  pull_request:
+    paths-ignore:
+        - '.vscode/**'
+        - '**/*.md'
+        - '**/*.html'
+      branches:
+      - main
+  # Allows you to run this workflow manually from the Actions tab for debugging/testing.
+  workflow_dispatch:
+
+# Cancel in-progress actions when pushing new changes to a branch, see for more details:
+# https://stackoverflow.com/questions/66335225/how-to-cancel-previous-runs-in-the-pr-when-you-push-new-commitsupdate-the-curre
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Install dependencies
+        run: |
+          sudo apt update  # ensure indexes are up-to-date
+          sudo apt install ccache ninja-build wget lsb-release software-properties-common gpg-agent
+
+      - name: Install clang-16
+        run: |
+          sudo bash -c "$(wget -O - https://apt.llvm.org/llvm.sh)" bash 16 all
+
+      - name: Configure
+        run: |
+          mkdir build
+          cd build
+          cmake -G Ninja .. -DCMAKE_CXX_COMPILER=clang++-16 -DCMAKE_C_COMPILER=clang-16 -DCMAKE_BUILD_TYPE=Debug
+    
+      - name: Build
+        run: |
+          cd build
+          ninja
+
+      - name: Test
+        run: |
+          cd build
+          ctest -j 1 -VV --output-on-failure
