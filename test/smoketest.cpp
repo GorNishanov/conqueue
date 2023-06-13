@@ -23,7 +23,6 @@ TEST_CASE("smoketest", "[smoketest]") {
   q.push(1);
   q.push(2);
   std::error_code ec;
-  REQUIRE_FALSE(q.try_push(3));
   REQUIRE_FALSE(q.try_push(3, ec));
   REQUIRE(ec == conqueue_errc::full);
 
@@ -71,7 +70,6 @@ TEST_CASE("blocking pull then closed") {
 
   // Make sure that the queue is empty.
   std::error_code ec;
-  REQUIRE_FALSE(q.try_pop());
   REQUIRE_FALSE(q.try_pop(ec));
   REQUIRE(ec == conqueue_errc::empty);
 

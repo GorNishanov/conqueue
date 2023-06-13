@@ -92,7 +92,6 @@ public:
   pop_sender async_pop() noexcept;
   T pop();
   std::optional<T> pop(std::error_code &ec);
-  std::optional<T> try_pop();
   std::optional<T> try_pop(std::error_code &ec);
 
   // For expediency push(T&&) and push(T const&) were collapsed into
@@ -101,7 +100,6 @@ public:
   push_sender async_push(T x) noexcept(is_nothrow_move_constructible_v<T>);
   void push(T x);
   bool push(T x, error_code &ec);
-  bool try_push(T x);
   bool try_push(T x, error_code &ec);
 
 private:
@@ -120,16 +118,6 @@ template <typename T>
 buffer_queue<T>::buffer_queue(size_t max_elems) : limit(max_elems) {}
 
 template <typename T> buffer_queue<T>::~buffer_queue() noexcept { close(); }
-
-template <typename T> std::optional<T> buffer_queue<T>::try_pop() {
-  std::error_code ec;
-  return try_pop(ec);
-}
-
-template <typename T> bool buffer_queue<T>::try_push(T value) {
-  std::error_code ec;
-  return try_push(value, ec);
-}
 
 template <typename T> void buffer_queue<T>::close() noexcept {
   std::unique_lock lock(mutex);
