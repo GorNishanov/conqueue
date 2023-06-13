@@ -6,6 +6,8 @@
 
 namespace std::experimental::__detail {
 
+// Thank you bing chat. You did good. Only two bugs needed to be fixed.
+
 // A class that represents an intrusive doubly-linked list
 template <auto _Next, auto _Prev> class intrusive_list;
 
@@ -59,8 +61,11 @@ public:
     // Update the head pointer
     head_ = head_->*_Next;
 
-    // Update the tail pointer if the list becomes empty
-    if (!head_)
+    // Update the prev pointer of the next object to point to nullptr
+    if (head_)
+      head_->*_Prev = nullptr;
+    else
+      // Update the tail pointer if the list becomes empty
       tail_ = nullptr;
 
     // Unlink the object from the list
@@ -83,8 +88,11 @@ public:
     // Update the tail pointer
     tail_ = tail_->*_Prev;
 
-    // Update the head pointer if the list becomes empty
-    if (!tail_)
+    // Update the next pointer of the previous object to point to nullptr
+    if (tail_)
+      tail_->*_Next = nullptr;
+    else
+      // Update the head pointer if the list becomes empty
       head_ = nullptr;
 
     // Unlink this object from the list
