@@ -31,10 +31,9 @@ jobs:
     steps:
       - uses: actions/checkout@v3
 
-      # - name: Install dependencies
-      #   run: |
-      #     sudo apt update  # ensure indexes are up-to-date
-      #     sudo apt install ninja-build
+      - name: Install dependencies
+        run: |
+          sudo apt install ninja-build
 
       - name: CMake generate
         run: |
