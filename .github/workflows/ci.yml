@@ -10,10 +10,10 @@ on:
       - main
   pull_request:
     paths-ignore:
-        - '.vscode/**'
-        - '**/*.md'
-        - '**/*.html'
-      branches:
+      - '.vscode/**'
+      - '**/*.md'
+      - '**/*.html'
+    branches:
       - main
   # Allows you to run this workflow manually from the Actions tab for debugging/testing.
   workflow_dispatch:
