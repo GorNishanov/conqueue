@@ -1,18 +1,18 @@
-name: Infinity Native Transpiler
+name: conqueue tests
 
 on:
   push:
     paths-ignore:
-      - '.vscode/**'
-      - '**/*.md'
-      - '**/*.html'
+      - ".vscode/**"
+      - "**/*.md"
+      - "**/*.html"
     branches:
       - main
   pull_request:
     paths-ignore:
-      - '.vscode/**'
-      - '**/*.md'
-      - '**/*.html'
+      - ".vscode/**"
+      - "**/*.md"
+      - "**/*.html"
     branches:
       - main
   # Allows you to run this workflow manually from the Actions tab for debugging/testing.
@@ -40,18 +40,43 @@ jobs:
         run: |
           sudo bash -c "$(wget -O - https://apt.llvm.org/llvm.sh)" bash 16 all
 
-      - name: Configure
+      - name: Get date for ccache
+        id: get-date
         run: |
+          echo "::set-output name=date::$(/bin/date -u "+%Y%m%d")"
+        shell: bash
+
+      - name: Setup ccache cache
+        id: conqueue_cache
+        uses: actions/cache@v3
+        with:
+          path: ~/.ccache
+          key: ${{ runner.os }}-conqueue_cache-${{ steps.get-date.outputs.date }}
+          restore-keys: |
+            ${{ runner.os }}-conqueue_cache-
+
+      - name: Initiate ccache
+        if: steps.conqueue_cache.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p ~/.ccache
+          export CCACHE_DIR=$(realpath ~/.ccache)
+          ccache -sz -M 1Gi
+
+      - name: CMake generate
+        run: |
+          export CCACHE_DIR=$(realpath ~/.ccache)
+          ccache -s
           mkdir build
           cd build
-          cmake -G Ninja .. -DCMAKE_CXX_COMPILER=clang++-16 -DCMAKE_C_COMPILER=clang-16 -DCMAKE_BUILD_TYPE=Debug
-    
+          cmake -G Ninja .. -DCMAKE_CXX_COMPILER=clang++-16 -DCMAKE_C_COMPILER=clang-16 -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+
       - name: Build
         run: |
           cd build
-          ninja
+          ninja -j 2
+          ccache -s
 
       - name: Test
         run: |
           cd build
-          ctest -j 1 -VV --output-on-failure
+          ctest -VV --output-on-failure
