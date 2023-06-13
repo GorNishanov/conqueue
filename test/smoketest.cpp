@@ -80,7 +80,6 @@ TEST_CASE("blocking pull then closed") {
   t.join();
 }
 
-#if 0
 exec::task<void> coro_push(buffer_queue<int> &q) {
   co_await q.async_push(3);
   co_await q.async_push(4);
@@ -103,6 +102,8 @@ TEST_CASE("coro_push") {
   stdexec::sync_wait(scope.on_empty());
 }
 
+// TODO: Test blocking push and close.
+#if 0
 exec::task<void> coro_pop(buffer_queue<int> &q) {
   REQUIRE(co_await q.async_pop() == 1);
   REQUIRE(co_await q.async_pop() == 2);

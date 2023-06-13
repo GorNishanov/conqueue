@@ -6,6 +6,7 @@
 #include <atomic>
 #include <cstdio>
 #include <deque>
+#include <exception>
 #include <mutex>
 #include <optional>
 #include <stdio.h>
@@ -223,14 +224,16 @@ template <typename T> void buffer_queue<T>::push(T x) {
   if (!push(std::move(x), ec))
     throw conqueue_error(ec);
 }
-#if 0
+
 template <typename T> struct buffer_queue<T>::push_sender {
   buffer_queue *queue;
   T value;
 
   using is_sender = void;
-  using completion_signatures =
-      stdexec::completion_signatures<stdexec::set_value_t()>;
+  using completion_signatures = // TODO: Cancellation support.
+      stdexec::completion_signatures<stdexec::set_value_t(),
+                                     stdexec::set_error_t(std::exception_ptr),
+                                     stdexec::set_stopped_t()>;
 
   template <typename Receiver> struct operation : waiter_base {
     push_sender sender;
@@ -238,16 +241,27 @@ template <typename T> struct buffer_queue<T>::push_sender {
 
     operation(push_sender &&sender, Receiver &&receiver)
         : sender(std::move(sender)), receiver(std::move(receiver)) {
-      this->value_ptr = std::addressof(sender.value);
+      this->value = std::addressof(sender.value);
       this->complete = [](waiter_base *w) noexcept {
         auto *self = static_cast<operation *>(w);
-        stdexec::set_value((Receiver &&)self->receiver);
+        if (auto *errc = get_if<conqueue_errc>(&self->value))
+          stdexec::set_error((Receiver &&)self->receiver,
+                             make_exception_ptr(conqueue_error(*errc)));
+        else
+          stdexec::set_value((Receiver &&)self->receiver);
       };
     }
 
     friend void tag_invoke(stdexec::start_t, operation &op) noexcept {
       auto &self = *op.sender.queue;
       std::unique_lock lock(self.mutex);
+      if (self.closed) {
+        lock.unlock();
+        stdexec::set_error(
+            (Receiver &&)op.receiver,
+            make_exception_ptr(conqueue_error(conqueue_errc::closed)));
+        return;
+      }
       if (self.limit == 0) {
         printf("async_push: queue is full, putting %p in the waiters queue\n",
                &op);
@@ -257,8 +271,7 @@ template <typename T> struct buffer_queue<T>::push_sender {
       // See if there are any waiters, if so, pass the value directly to them.
       if (!self.waiters.empty()) {
         auto *waiter = self.waiters.pop_front();
-        *waiter->value_ptr =
-            std::move(op.sender.value); // TODO: Mess with __manual_lifetime.
+        waiter->value = std::move(op.sender.value);
         lock.unlock();
         printf("async push: unlocking reader %p\n", waiter);
         waiter->complete(waiter);
@@ -283,7 +296,6 @@ template <typename T>
 buffer_queue<T>::push_sender buffer_queue<T>::async_push(T x) {
   return {this, std::move(x)};
 }
-#endif
 
 template <typename T>
 optional<T> buffer_queue<T>::locked_pop(unique_lock<std::mutex> &lock,
@@ -354,6 +366,7 @@ template <typename T> T buffer_queue<T>::pop() {
 
   throw conqueue_error(ec);
 }
+
 #if 0
 template <typename T> struct buffer_queue<T>::pop_sender {
   buffer_queue *queue;
@@ -365,11 +378,9 @@ template <typename T> struct buffer_queue<T>::pop_sender {
   template <typename Receiver> struct operation : waiter_base {
     buffer_queue &queue;
     Receiver receiver;
-    T value;
 
     operation(buffer_queue &queue, Receiver &&receiver)
         : queue(queue), receiver(std::move(receiver)) {
-      this->value_ptr = std::addressof(value);
       this->complete = [](waiter_base *w) noexcept {
         auto *self = static_cast<operation *>(w);
         stdexec::set_value((Receiver &&)self->receiver, std::move(self->value));
