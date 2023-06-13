@@ -66,22 +66,7 @@ template <typename T> class buffer_queue {
     void (*complete)(waiter_base *) noexcept;
   };
 
-  struct sync_waiter : waiter_base {
-    std::atomic_flag flag;
-
-    sync_waiter() noexcept {
-      this->complete = [](waiter_base *w) noexcept {
-        auto *self = static_cast<sync_waiter *>(w);
-        printf("notifying sync waiter %p\n", w);
-        self->flag.test_and_set();
-        self->flag.notify_one();
-      };
-    }
-
-    sync_waiter(T &x) noexcept { this->value = std::addressof(x); }
-
-    void wait() noexcept { flag.wait(false); }
-  };
+  struct blocking_waiter;
 
   std::optional<T> locked_pop(unique_lock<mutex> &lock, error_code &ec);
   bool locked_push(unique_lock<mutex> &lock, T &value, error_code &ec);
@@ -186,6 +171,23 @@ template <typename T> bool buffer_queue<T>::try_push(T x, error_code &ec) {
   return locked_push(lock, x, ec);
 }
 
+template <typename T> struct buffer_queue<T>::blocking_waiter : waiter_base {
+  std::atomic_flag flag;
+
+  blocking_waiter() noexcept {
+    this->complete = [](waiter_base *w) noexcept {
+      auto *self = static_cast<blocking_waiter *>(w);
+      printf("notifying sync waiter %p\n", w);
+      self->flag.test_and_set();
+      self->flag.notify_one();
+    };
+  }
+
+  blocking_waiter(T &x) noexcept { this->value = std::addressof(x); }
+
+  void wait() noexcept { flag.wait(false); }
+};
+
 template <typename T> bool buffer_queue<T>::push(T x, error_code &ec) {
   std::unique_lock lock(mutex);
   if (closed) {
@@ -195,7 +197,7 @@ template <typename T> bool buffer_queue<T>::push(T x, error_code &ec) {
   ec = {}; // From this point on, we will not fail.
 
   if (limit == 0) {
-    sync_waiter waiter(x);
+    blocking_waiter waiter(x);
     waiters.push_back(&waiter);
     lock.unlock();
     waiter.wait();
@@ -328,7 +330,7 @@ template <typename T> optional<T> buffer_queue<T>::pop(error_code &ec) {
       ec = conqueue_errc::closed;
       return nullopt;
     }
-    sync_waiter waiter;
+    blocking_waiter waiter;
     printf("pop: queue is empty, putting %p in the waiters queue\n", &waiter);
     waiters.push_back(&waiter);
     lock.unlock();
