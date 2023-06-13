@@ -192,7 +192,9 @@ template <typename T> struct buffer_queue<T>::blocking_waiter : waiter_base {
     };
   }
 
-  blocking_waiter(T &x) noexcept { this->value = std::addressof(x); }
+  blocking_waiter(T &x) noexcept : blocking_waiter() {
+    this->value = std::addressof(x);
+  }
 
   void wait() noexcept { flag.wait(false); }
 };
@@ -206,9 +208,11 @@ template <typename T> bool buffer_queue<T>::push(T x, error_code &ec) {
 
   if (limit == 0) {
     blocking_waiter waiter(x);
+    printf("push: queue is full, putting %p in the waiters queue\n", &waiter);
     waiters.push_back(&waiter);
     lock.unlock();
     waiter.wait();
+    printf("push: was resumed %p\n", &waiter);
     // Queue got closed while we were waiting.
     if (auto *errc = get_if<conqueue_errc>(&waiter.value)) {
       ec = *errc;
