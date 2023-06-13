@@ -19,7 +19,7 @@ using namespace std::literals;
 
 using stdexec::on;
 
-TEST_CASE("smoketest", "[smoketest]") {
+TEST_CASE("conqueue: smoketest") {
   buffer_queue<int> q(2);
   REQUIRE_FALSE(q.is_closed());
   q.push(1);
@@ -32,7 +32,7 @@ TEST_CASE("smoketest", "[smoketest]") {
   REQUIRE(q.pop() == 2);
 }
 
-TEST_CASE("initally closed test") {
+TEST_CASE("conqueue: initially closed test") {
   buffer_queue<int> q(2);
   REQUIRE_FALSE(q.is_closed());
   q.close();
@@ -51,7 +51,7 @@ TEST_CASE("initally closed test") {
   }
 }
 
-TEST_CASE("pull from closed") {
+TEST_CASE("conqueue: pull from closed") {
   buffer_queue<int> q(2);
   q.push(1);
   q.push(2);
@@ -64,7 +64,7 @@ TEST_CASE("pull from closed") {
   REQUIRE_THROWS_AS(q.pop(), conqueue_error);
 }
 
-TEST_CASE("blocking pull then closed") {
+TEST_CASE("conqueue: blocking pull then closed") {
   buffer_queue<int> q(2);
   thread t([&q] {
     this_thread::sleep_for(10ms);
@@ -87,7 +87,7 @@ exec::task<void> coro_push(buffer_queue<int>& q) {
   co_await q.async_push(4);
 }
 
-TEST_CASE("coro_push") {
+TEST_CASE("conqueue: coro_push") {
   exec::static_thread_pool pool(1);
   exec::async_scope scope;
   buffer_queue<int> q(2);
@@ -111,7 +111,7 @@ exec::task<void> coro_pop(buffer_queue<int>& q) {
   REQUIRE(co_await q.async_pop() == 4);
 }
 
-TEST_CASE("coro_pop") {
+TEST_CASE("conqueue: coro_pop") {
   exec::static_thread_pool pool(1);
   exec::async_scope scope;
   buffer_queue<int> q(2);

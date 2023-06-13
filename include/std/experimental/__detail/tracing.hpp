@@ -1,5 +1,5 @@
 // Copyright (c) 2023 Gor Nishanov
-// Licenced under MIT license. See LICENSE.txt for details.
+// Licensed under MIT license. See LICENSE.txt for details.
 
 #ifndef _STD_EXPERIMENTAL_CONQUEUE_TRACING
 #define _STD_EXPERIMENTAL_CONQUEUE_TRACING

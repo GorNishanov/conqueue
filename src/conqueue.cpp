@@ -1,5 +1,5 @@
 // Copyright (c) 2023 Gor Nishanov
-// Licenced under MIT license. See LICENSE.txt for details.
+// Licensed under MIT license. See LICENSE.txt for details.
 
 #include "std/experimental/conqueue"
 #include <system_error>
