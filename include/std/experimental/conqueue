@@ -27,7 +27,7 @@ struct is_error_code_enum<experimental::conqueue_errc> : public true_type {};
 
 namespace std::experimental {
 
-const error_category &conqueue_category() noexcept;
+const error_category& conqueue_category() noexcept;
 
 inline error_code make_error_code(conqueue_errc e) noexcept {
   return {static_cast<int>(e), conqueue_category()};
@@ -41,9 +41,10 @@ class conqueue_error : public runtime_error {
   error_code ec;
 
 public:
-  explicit conqueue_error(const std::error_code &ec);
+  explicit conqueue_error(const std::error_code& ec);
   ~conqueue_error() noexcept;
-  const error_code &code() const noexcept { return ec; }
+
+  const error_code& code() const noexcept { return ec; }
 };
 
 // Inspired by https://wg21.link/P0260R5 A proposal to add a concurrent queue
@@ -52,34 +53,36 @@ public:
 
 template <typename T> class buffer_queue {
   buffer_queue() = delete;
-  buffer_queue(const buffer_queue &) = delete;
-  buffer_queue &operator=(const buffer_queue &) = delete;
+  buffer_queue(const buffer_queue&) = delete;
+  buffer_queue& operator=(const buffer_queue&) = delete;
 
   struct pop_sender;
   struct push_sender;
 
   struct waiter_base {
-    waiter_base *next{};
+    waiter_base* next{};
     // For push case, we store the pointer to the value to be pushed.
     // For pop case, we store the value.
-    variant<monostate, conqueue_errc, T, T *> value;
-    void (*complete)(waiter_base *) noexcept;
-    T &get_value() noexcept {
+    variant<monostate, conqueue_errc, T, T*> value;
+    void (*complete)(waiter_base*) noexcept;
+
+    T& get_value() noexcept {
       // pre: user already verified that the value does not contain the error.
       // pre: by construcion, it should not be a monostate by the point we get
       // here.
-      if (T *v = get_if<T>(&value))
+      if (T* v = get_if<T>(&value))
         return *v;
       else
-        return *std::get<T *>(value);
+        return *std::get<T*>(value);
     }
+
     ~waiter_base() noexcept { printf("waiter_base: destroying %p\n", this); }
   };
 
   struct blocking_waiter;
 
-  std::optional<T> locked_pop(unique_lock<mutex> &lock, error_code &ec);
-  bool locked_push(unique_lock<mutex> &lock, T &value, error_code &ec);
+  std::optional<T> locked_pop(unique_lock<mutex>& lock, error_code& ec);
+  bool locked_push(unique_lock<mutex>& lock, T& value, error_code& ec);
 
 public:
   typedef T value_type;
@@ -91,16 +94,16 @@ public:
 
   pop_sender async_pop() noexcept;
   T pop();
-  std::optional<T> pop(std::error_code &ec);
-  std::optional<T> try_pop(std::error_code &ec);
+  std::optional<T> pop(std::error_code& ec);
+  std::optional<T> try_pop(std::error_code& ec);
 
   // For expediency push(T&&) and push(T const&) were collapsed into
   // push(T). Real implementation can split them up.
 
   push_sender async_push(T x) noexcept(is_nothrow_move_constructible_v<T>);
   void push(T x);
-  bool push(T x, error_code &ec);
-  bool try_push(T x, error_code &ec);
+  bool push(T x, error_code& ec);
+  bool try_push(T x, error_code& ec);
 
 private:
   std::mutex mutex;
@@ -125,7 +128,7 @@ template <typename T> void buffer_queue<T>::close() noexcept {
     return;
   closed = true;
   while (!waiters.empty()) {
-    auto *waiter = waiters.pop_front();
+    auto* waiter = waiters.pop_front();
     waiter->value = conqueue_errc::closed;
     lock.unlock();
     waiter->complete(waiter);
@@ -134,14 +137,14 @@ template <typename T> void buffer_queue<T>::close() noexcept {
 }
 
 template <typename T>
-bool buffer_queue<T>::locked_push(unique_lock<std::mutex> &lock, T &value,
-                                  error_code &ec) {
+bool buffer_queue<T>::locked_push(unique_lock<std::mutex>& lock, T& value,
+                                  error_code& ec) {
   // The caller acquired the lock and verified that the queue is not full.
   ec = {};
 
   // See if there are any waiters, if so, pass the value directly to them.
   if (!waiters.empty()) {
-    auto *waiter = waiters.pop_front();
+    auto* waiter = waiters.pop_front();
     waiter->value = std::move(value);
     lock.unlock();
     waiter->complete(waiter);
@@ -153,7 +156,7 @@ bool buffer_queue<T>::locked_push(unique_lock<std::mutex> &lock, T &value,
   return true;
 }
 
-template <typename T> bool buffer_queue<T>::try_push(T x, error_code &ec) {
+template <typename T> bool buffer_queue<T>::try_push(T x, error_code& ec) {
   std::unique_lock lock(mutex);
   if (closed) {
     ec = conqueue_errc::closed;
@@ -172,22 +175,22 @@ template <typename T> struct buffer_queue<T>::blocking_waiter : waiter_base {
   std::atomic_flag flag;
 
   blocking_waiter() noexcept {
-    this->complete = [](waiter_base *w) noexcept {
-      auto *self = static_cast<blocking_waiter *>(w);
+    this->complete = [](waiter_base* w) noexcept {
+      auto* self = static_cast<blocking_waiter*>(w);
       printf("notifying sync waiter %p\n", w);
       self->flag.test_and_set();
       self->flag.notify_one();
     };
   }
 
-  blocking_waiter(T &x) noexcept : blocking_waiter() {
+  blocking_waiter(T& x) noexcept : blocking_waiter() {
     this->value = std::addressof(x);
   }
 
   void wait() noexcept { flag.wait(false); }
 };
 
-template <typename T> bool buffer_queue<T>::push(T x, error_code &ec) {
+template <typename T> bool buffer_queue<T>::push(T x, error_code& ec) {
   std::unique_lock lock(mutex);
   if (closed) {
     ec = conqueue_errc::closed;
@@ -202,7 +205,7 @@ template <typename T> bool buffer_queue<T>::push(T x, error_code &ec) {
     waiter.wait();
     printf("push: was resumed %p\n", &waiter);
     // Queue got closed while we were waiting.
-    if (auto *errc = get_if<conqueue_errc>(&waiter.value)) {
+    if (auto* errc = get_if<conqueue_errc>(&waiter.value)) {
       ec = *errc;
       return false;
     }
@@ -214,7 +217,7 @@ template <typename T> bool buffer_queue<T>::push(T x, error_code &ec) {
 
   // See if there are any waiters, if so, pass the value directly to them.
   if (!waiters.empty()) {
-    auto *waiter = waiters.pop_front();
+    auto* waiter = waiters.pop_front();
     waiter->value = std::move(x);
     lock.unlock();
     waiter->complete(waiter);
@@ -233,7 +236,7 @@ template <typename T> void buffer_queue<T>::push(T x) {
 }
 
 template <typename T> struct buffer_queue<T>::push_sender {
-  buffer_queue *queue;
+  buffer_queue* queue;
   T value;
 
   using is_sender = void;
@@ -246,26 +249,26 @@ template <typename T> struct buffer_queue<T>::push_sender {
     push_sender sender;
     Receiver receiver;
 
-    operation(push_sender &&sender, Receiver &&receiver)
+    operation(push_sender&& sender, Receiver&& receiver)
         : sender(std::move(sender)), receiver(std::move(receiver)) {
       this->value = std::addressof(sender.value);
-      this->complete = [](waiter_base *w) noexcept {
-        auto *self = static_cast<operation *>(w);
-        if (auto *errc = get_if<conqueue_errc>(&self->value))
-          stdexec::set_error((Receiver &&)self->receiver,
+      this->complete = [](waiter_base* w) noexcept {
+        auto* self = static_cast<operation*>(w);
+        if (auto* errc = get_if<conqueue_errc>(&self->value))
+          stdexec::set_error((Receiver&&)self->receiver,
                              make_exception_ptr(conqueue_error(*errc)));
         else
-          stdexec::set_value((Receiver &&)self->receiver);
+          stdexec::set_value((Receiver&&)self->receiver);
       };
     }
 
-    friend void tag_invoke(stdexec::start_t, operation &op) noexcept {
-      auto &self = *op.sender.queue;
+    friend void tag_invoke(stdexec::start_t, operation& op) noexcept {
+      auto& self = *op.sender.queue;
       std::unique_lock lock(self.mutex);
       if (self.closed) {
         lock.unlock();
         stdexec::set_error(
-            (Receiver &&)op.receiver,
+            (Receiver&&)op.receiver,
             make_exception_ptr(conqueue_error(conqueue_errc::closed)));
         return;
       }
@@ -277,7 +280,7 @@ template <typename T> struct buffer_queue<T>::push_sender {
       }
       // See if there are any waiters, if so, pass the value directly to them.
       if (!self.waiters.empty()) {
-        auto *waiter = self.waiters.pop_front();
+        auto* waiter = self.waiters.pop_front();
         waiter->value = &op.sender.value;
         lock.unlock();
         printf("async push: unlocking reader %p\n", waiter);
@@ -288,12 +291,12 @@ template <typename T> struct buffer_queue<T>::push_sender {
         self.queue.push_back(std::move(op.sender.value));
         ++self.limit;
       }
-      stdexec::set_value((Receiver &&)op.receiver);
+      stdexec::set_value((Receiver&&)op.receiver);
     }
   };
 
   template <stdexec::receiver Receiver>
-  friend auto tag_invoke(stdexec::connect_t, push_sender &&s, Receiver &&r)
+  friend auto tag_invoke(stdexec::connect_t, push_sender&& s, Receiver&& r)
       -> operation<Receiver> {
     return {std::move(s), std::forward<Receiver>(r)};
   }
@@ -306,8 +309,8 @@ buffer_queue<T>::async_push(T x) noexcept(is_nothrow_move_constructible_v<T>) {
 }
 
 template <typename T>
-optional<T> buffer_queue<T>::locked_pop(unique_lock<std::mutex> &lock,
-                                        error_code &ec) {
+optional<T> buffer_queue<T>::locked_pop(unique_lock<std::mutex>& lock,
+                                        error_code& ec) {
   // The caller already verified that the queue is not empty.
   ec = {};
   T result = std::move(queue.front());
@@ -317,7 +320,7 @@ optional<T> buffer_queue<T>::locked_pop(unique_lock<std::mutex> &lock,
   if (!waiters.empty()) {
     // During pop, waiters are the pushers blocked because the queue is full.
     // Release a single pusher and put its value into the queue.
-    auto *waiter = waiters.pop_front();
+    auto* waiter = waiters.pop_front();
     queue.push_back(std::move(waiter->get_value()));
     lock.unlock();
     printf("unlocking pusher %p\n", waiter);
@@ -330,7 +333,7 @@ optional<T> buffer_queue<T>::locked_pop(unique_lock<std::mutex> &lock,
 }
 
 template <typename T>
-optional<T> buffer_queue<T>::try_pop(std::error_code &ec) {
+optional<T> buffer_queue<T>::try_pop(std::error_code& ec) {
   std::unique_lock lock(mutex);
 
   // If the queue is empty, wait for a value to be pushed.
@@ -342,7 +345,7 @@ optional<T> buffer_queue<T>::try_pop(std::error_code &ec) {
   return locked_pop(lock, ec);
 }
 
-template <typename T> optional<T> buffer_queue<T>::pop(error_code &ec) {
+template <typename T> optional<T> buffer_queue<T>::pop(error_code& ec) {
   std::unique_lock lock(mutex);
 
   // If the queue is empty, wait for a value to be pushed.
@@ -358,7 +361,7 @@ template <typename T> optional<T> buffer_queue<T>::pop(error_code &ec) {
     lock.unlock();
     waiter.wait();
     printf("pop: %p was just resumed\n", &waiter);
-    if (auto *errc = get_if<conqueue_errc>(&waiter.value)) {
+    if (auto* errc = get_if<conqueue_errc>(&waiter.value)) {
       ec = *errc;
       return nullopt;
     }
@@ -378,7 +381,7 @@ template <typename T> T buffer_queue<T>::pop() {
 }
 
 template <typename T> struct buffer_queue<T>::pop_sender {
-  buffer_queue *queue;
+  buffer_queue* queue;
 
   using is_sender = void;
   using completion_signatures = // TODO: Cancellation support.
@@ -387,24 +390,24 @@ template <typename T> struct buffer_queue<T>::pop_sender {
                                      stdexec::set_stopped_t()>;
 
   template <typename Receiver> struct operation : waiter_base {
-    buffer_queue &queue;
+    buffer_queue& queue;
     Receiver receiver;
 
-    operation(buffer_queue &queue, Receiver &&receiver)
+    operation(buffer_queue& queue, Receiver&& receiver)
         : queue(queue), receiver(std::move(receiver)) {
-      this->complete = [](waiter_base *w) noexcept {
-        auto *self = static_cast<operation *>(w);
-        if (auto *errc = get_if<conqueue_errc>(&self->value))
-          stdexec::set_error((Receiver &&)self->receiver,
+      this->complete = [](waiter_base* w) noexcept {
+        auto* self = static_cast<operation*>(w);
+        if (auto* errc = get_if<conqueue_errc>(&self->value))
+          stdexec::set_error((Receiver&&)self->receiver,
                              make_exception_ptr(conqueue_error(*errc)));
         else
-          stdexec::set_value((Receiver &&)self->receiver,
+          stdexec::set_value((Receiver&&)self->receiver,
                              std::move(self->get_value()));
       };
     }
 
-    friend void tag_invoke(stdexec::start_t, operation &op) noexcept {
-      auto &self = op.queue;
+    friend void tag_invoke(stdexec::start_t, operation& op) noexcept {
+      auto& self = op.queue;
       std::unique_lock lock(self.mutex);
       // If the queue is empty, add ourselves to the waiters.
       if (self.queue.empty()) {
@@ -412,7 +415,7 @@ template <typename T> struct buffer_queue<T>::pop_sender {
         if (self.closed) {
           lock.unlock();
           stdexec::set_error(
-              (Receiver &&)op.receiver,
+              (Receiver&&)op.receiver,
               make_exception_ptr(conqueue_error(conqueue_errc::closed)));
           return;
         }
@@ -430,7 +433,7 @@ template <typename T> struct buffer_queue<T>::pop_sender {
       if (!self.waiters.empty()) {
         // During pop, waiters are the pushers blocked because the queue is
         // full. Release a single pusher and put its value into the queue.
-        auto *waiter = self.waiters.pop_front();
+        auto* waiter = self.waiters.pop_front();
         self.queue.push_back(std::move(waiter->get_value()));
         lock.unlock();
         printf("async_pop: unlocking pusher %p\n", waiter);
@@ -440,12 +443,12 @@ template <typename T> struct buffer_queue<T>::pop_sender {
         lock.unlock();
       }
 
-      stdexec::set_value((Receiver &&)op.receiver, std::move(value));
+      stdexec::set_value((Receiver&&)op.receiver, std::move(value));
     }
   };
 
   template <stdexec::receiver Receiver>
-  friend auto tag_invoke(stdexec::connect_t, pop_sender &&s, Receiver &&r)
+  friend auto tag_invoke(stdexec::connect_t, pop_sender&& s, Receiver&& r)
       -> operation<Receiver> {
     return {*s.queue, std::forward<Receiver>(r)};
   }
