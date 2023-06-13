@@ -16,9 +16,6 @@
 #include <stdexec/__detail/__intrusive_queue.hpp>
 #include <stdexec/execution.hpp>
 
-#include "exec/inline_scheduler.hpp"
-#include <exec/__detail/__manual_lifetime.hpp>
-
 namespace std::experimental {
 enum class conqueue_errc { success, empty, full, closed };
 }
@@ -63,8 +60,20 @@ template <typename T> class buffer_queue {
 
   struct waiter_base {
     waiter_base *next{};
+    // For push case, we store the pointer to the value to be pushed.
+    // For pop case, we store the value.
     variant<monostate, conqueue_errc, T, T *> value;
     void (*complete)(waiter_base *) noexcept;
+    T &get_value() noexcept {
+      // pre: user already verified that the value does not contain the error.
+      // pre: by construcion, it should not be a monostate by the point we get
+      // here.
+      if (T *v = get_if<T>(&value))
+        return *v;
+      else
+        return *std::get<T *>(value);
+    }
+    ~waiter_base() noexcept { printf("waiter_base: destroying %p\n", this); }
   };
 
   struct blocking_waiter;
@@ -80,19 +89,18 @@ public:
   ~buffer_queue() noexcept;
   void close() noexcept;
 
+  pop_sender async_pop() noexcept;
   T pop();
   std::optional<T> pop(std::error_code &ec);
   std::optional<T> try_pop();
   std::optional<T> try_pop(std::error_code &ec);
 
-  pop_sender async_pop() noexcept;
-
   // For expediency push(T&&) and push(T const&) were collapsed into
   // push(T). Real implementation can split them up.
 
+  push_sender async_push(T x) noexcept(is_nothrow_move_constructible_v<T>);
   void push(T x);
   bool push(T x, error_code &ec);
-  push_sender async_push(T x);
   bool try_push(T x);
   bool try_push(T x, error_code &ec);
 
@@ -195,15 +203,22 @@ template <typename T> bool buffer_queue<T>::push(T x, error_code &ec) {
     ec = conqueue_errc::closed;
     return false;
   }
-  ec = {}; // From this point on, we will not fail.
 
   if (limit == 0) {
     blocking_waiter waiter(x);
     waiters.push_back(&waiter);
     lock.unlock();
     waiter.wait();
+    // Queue got closed while we were waiting.
+    if (auto *errc = get_if<conqueue_errc>(&waiter.value)) {
+      ec = *errc;
+      return false;
+    }
+    ec = {};
     return true;
   }
+
+  ec = {}; // From this point on, we will not fail.
 
   // See if there are any waiters, if so, pass the value directly to them.
   if (!waiters.empty()) {
@@ -271,7 +286,7 @@ template <typename T> struct buffer_queue<T>::push_sender {
       // See if there are any waiters, if so, pass the value directly to them.
       if (!self.waiters.empty()) {
         auto *waiter = self.waiters.pop_front();
-        waiter->value = std::move(op.sender.value);
+        waiter->value = &op.sender.value;
         lock.unlock();
         printf("async push: unlocking reader %p\n", waiter);
         waiter->complete(waiter);
@@ -293,7 +308,8 @@ template <typename T> struct buffer_queue<T>::push_sender {
 };
 
 template <typename T>
-buffer_queue<T>::push_sender buffer_queue<T>::async_push(T x) {
+buffer_queue<T>::push_sender
+buffer_queue<T>::async_push(T x) noexcept(is_nothrow_move_constructible_v<T>) {
   return {this, std::move(x)};
 }
 
@@ -307,8 +323,10 @@ optional<T> buffer_queue<T>::locked_pop(unique_lock<std::mutex> &lock,
 
   // See if there are any waiters that can be resumed now.
   if (!waiters.empty()) {
+    // During pop, waiters are the pushers blocked because the queue is full.
+    // Release a single pusher and put its value into the queue.
     auto *waiter = waiters.pop_front();
-    queue.push_back(std::move(*get<T *>(waiter->value)));
+    queue.push_back(std::move(waiter->get_value()));
     lock.unlock();
     printf("unlocking pusher %p\n", waiter);
     waiter->complete(waiter);
@@ -353,7 +371,7 @@ template <typename T> optional<T> buffer_queue<T>::pop(error_code &ec) {
       return nullopt;
     }
     ec = {};
-    return get<T>(waiter.value);
+    return waiter.get_value();
   }
 
   return locked_pop(lock, ec);
@@ -367,13 +385,14 @@ template <typename T> T buffer_queue<T>::pop() {
   throw conqueue_error(ec);
 }
 
-#if 0
 template <typename T> struct buffer_queue<T>::pop_sender {
   buffer_queue *queue;
 
   using is_sender = void;
-  using completion_signatures =
-      stdexec::completion_signatures<stdexec::set_value_t(T)>;
+  using completion_signatures = // TODO: Cancellation support.
+      stdexec::completion_signatures<stdexec::set_value_t(T),
+                                     stdexec::set_error_t(std::exception_ptr),
+                                     stdexec::set_stopped_t()>;
 
   template <typename Receiver> struct operation : waiter_base {
     buffer_queue &queue;
@@ -383,7 +402,12 @@ template <typename T> struct buffer_queue<T>::pop_sender {
         : queue(queue), receiver(std::move(receiver)) {
       this->complete = [](waiter_base *w) noexcept {
         auto *self = static_cast<operation *>(w);
-        stdexec::set_value((Receiver &&)self->receiver, std::move(self->value));
+        if (auto *errc = get_if<conqueue_errc>(&self->value))
+          stdexec::set_error((Receiver &&)self->receiver,
+                             make_exception_ptr(conqueue_error(*errc)));
+        else
+          stdexec::set_value((Receiver &&)self->receiver,
+                             std::move(self->get_value()));
       };
     }
 
@@ -392,19 +416,30 @@ template <typename T> struct buffer_queue<T>::pop_sender {
       std::unique_lock lock(self.mutex);
       // If the queue is empty, add ourselves to the waiters.
       if (self.queue.empty()) {
+        // Unless, of course, the queue is closed, then return an error.
+        if (self.closed) {
+          lock.unlock();
+          stdexec::set_error(
+              (Receiver &&)op.receiver,
+              make_exception_ptr(conqueue_error(conqueue_errc::closed)));
+          return;
+        }
+
         printf("async_pop: queue is empty, putting %p in the waiters queue\n",
                &op);
         self.waiters.push_back(&op);
         return;
       }
 
-      op.value = std::move(self.queue.front());
+      T value = std::move(self.queue.front());
       self.queue.pop_front();
 
       // See if there are any waiters
       if (!self.waiters.empty()) {
+        // During pop, waiters are the pushers blocked because the queue is
+        // full. Release a single pusher and put its value into the queue.
         auto *waiter = self.waiters.pop_front();
-        self.queue.push_back(std::move(*waiter->value_ptr));
+        self.queue.push_back(std::move(waiter->get_value()));
         lock.unlock();
         printf("async_pop: unlocking pusher %p\n", waiter);
         waiter->complete(waiter);
@@ -413,7 +448,7 @@ template <typename T> struct buffer_queue<T>::pop_sender {
         lock.unlock();
       }
 
-      stdexec::set_value((Receiver &&)op.receiver, std::move(op.value));
+      stdexec::set_value((Receiver &&)op.receiver, std::move(value));
     }
   };
 
@@ -428,7 +463,6 @@ template <typename T>
 buffer_queue<T>::pop_sender buffer_queue<T>::async_pop() noexcept {
   return {this};
 }
-#endif
 } // namespace std::experimental
 
 #endif // _STD_EXPERIMENTAL_CONQUEUE
