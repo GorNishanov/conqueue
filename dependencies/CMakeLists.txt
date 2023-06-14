@@ -12,6 +12,7 @@ FetchContent_Declare(
   GIT_TAG        v3.3.2 # Feb 27, 2023
 )
 
+#if 0
 FetchContent_Declare(
   stdexec
   GIT_REPOSITORY https://github.com/NVIDIA/stdexec
@@ -19,6 +20,15 @@ FetchContent_Declare(
 )
 
 FetchContent_MakeAvailable(Catch2 stdexec)
+#else
+FetchContent_Declare(
+  unifex
+  GIT_REPOSITORY https://github.com/facebookexperimental/libunifex
+  GIT_TAG        5daf47f17825dd2c07465c0e606de81cd5ac788c # Jun 12, 2023
+)
+
+FetchContent_MakeAvailable(Catch2 unifex)
+#endif
 
 list(APPEND CMAKE_MODULE_PATH ${catch2_SOURCE_DIR}/extras)
 include(CTest)

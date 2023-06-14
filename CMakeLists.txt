@@ -24,7 +24,7 @@ target_include_directories(conqueue PUBLIC
                            $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
                            )
 
-target_link_libraries(conqueue PUBLIC stdexec)
+target_link_libraries(conqueue PUBLIC unifex)
 
 # Use C++20 standard
 target_compile_features(conqueue INTERFACE cxx_std_20)

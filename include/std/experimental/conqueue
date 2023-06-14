@@ -15,8 +15,33 @@
 #include <system_error>
 #include <variant>
 
+#if 0
 #include <stdexec/execution.hpp>
 #include <stdexec/stop_token.hpp>
+#else
+
+// #include <unifex/stop_token.hpp>
+#include <unifex/sync_wait.hpp>
+#include <unifex/task.hpp>
+
+#include <unifex/async_scope.hpp>
+#include <unifex/static_thread_pool.hpp>
+#include <unifex/task.hpp>
+
+namespace stdexec {
+using namespace unifex;
+using start_t = tag_t<start>;
+using connect_t = tag_t<connect>;
+template <typename R> decltype(auto) set_stopped(R&& r) noexcept {
+  return unifex::set_done((R&&)r);
+}
+} // namespace stdexec
+
+namespace exec {
+using namespace unifex;
+}
+
+#endif
 
 namespace std::experimental {
 enum class conqueue_errc { success, empty, full, closed };
@@ -235,13 +260,27 @@ template <typename T> void buffer_queue<T>::push(T x) {
 template <typename T> struct buffer_queue<T>::push_sender {
   buffer_queue* queue;
   T value;
+#if 1
+  template <template <typename...> class Variant,
+            template <typename...> class Tuple>
+  using value_types = Variant<Tuple<>>;
 
+  template <template <typename...> class Variant>
+  using error_types = Variant<std::exception_ptr>;
+
+  static constexpr bool sends_done = true;
+
+  static constexpr unifex::blocking_kind blocking =
+      unifex::blocking_kind::never;
+
+  static constexpr bool is_always_scheduler_affine = false;
+#else
   using is_sender = void;
   using completion_signatures = // TODO: Cancellation support.
       stdexec::completion_signatures<stdexec::set_value_t(),
                                      stdexec::set_error_t(std::exception_ptr),
                                      stdexec::set_stopped_t()>;
-
+#endif
   template <typename Receiver> struct operation : waiter_base {
     push_sender sender;
     Receiver receiver;
@@ -381,13 +420,27 @@ template <typename T> T buffer_queue<T>::pop() {
 
 template <typename T> struct buffer_queue<T>::pop_sender {
   buffer_queue* queue;
+#if 1
+  template <template <typename...> class Variant,
+            template <typename...> class Tuple>
+  using value_types = Variant<Tuple<T>>;
 
+  template <template <typename...> class Variant>
+  using error_types = Variant<std::exception_ptr>;
+
+  static constexpr bool sends_done = true;
+
+  static constexpr unifex::blocking_kind blocking =
+      unifex::blocking_kind::never;
+
+  static constexpr bool is_always_scheduler_affine = false;
+#else
   using is_sender = void;
   using completion_signatures = // TODO: Cancellation support.
       stdexec::completion_signatures<stdexec::set_value_t(T),
                                      stdexec::set_error_t(std::exception_ptr),
                                      stdexec::set_stopped_t()>;
-
+#endif
   template <typename Receiver> struct operation : waiter_base {
     buffer_queue& queue;
     Receiver receiver;
@@ -406,9 +459,13 @@ template <typename T> struct buffer_queue<T>::pop_sender {
       }
     };
 
+#if 0
     using __on_stop = std::optional<typename stdexec::stop_token_of_t<
         stdexec::env_of_t<Receiver>&>::template callback_type<cancel_callback>>;
-
+#else
+    using __on_stop =
+        std::optional<stdexec::inplace_stop_callback<cancel_callback>>;
+#endif
     __on_stop stop_callback;
     atomic<bool> ready{false};
 
@@ -427,9 +484,10 @@ template <typename T> struct buffer_queue<T>::pop_sender {
 
     friend void tag_invoke(stdexec::start_t, operation& op) noexcept {
       auto& self = op.queue;
-      auto&& env = stdexec::get_env(op.receiver);
-      auto stop_token = stdexec::get_stop_token(env);
-      constexpr bool sp = std::unstoppable_token<decltype(stop_token)>;
+      // auto&& env = stdexec::get_env(op.receiver);
+      auto stop_token = stdexec::get_stop_token(op.receiver);
+      // constexpr bool sp = std::unstoppable_token<decltype(stop_token)>;
+      constexpr bool sp = true;
 
       std::unique_lock lock(self.mutex);
       if constexpr (sp) {

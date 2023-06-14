@@ -3,12 +3,6 @@
 
 #include <catch2/catch_test_macros.hpp>
 
-#include <exec/async_scope.hpp>
-#include <exec/static_thread_pool.hpp>
-#include <exec/task.hpp>
-
-#include <stdexec/execution.hpp>
-
 #include <chrono>
 #include <system_error>
 #include <thread>
@@ -25,6 +19,9 @@ exec::task<void> coro_push(buffer_queue<int>& q) {
 }
 
 exec::task<void> coro_pop(buffer_queue<int>& q) {
+  puts("enter pop");
+  (void)q.async_pop();
+  puts("popped a value");
   REQUIRE(co_await q.async_pop() == 1);
   REQUIRE(co_await q.async_pop() == 2);
   REQUIRE(co_await q.async_pop() == 3);
@@ -129,13 +126,15 @@ TEST_CASE("conqueue: coro_pop") {
 #endif
 
 TEST_CASE("conqueue: cancellation") {
-  exec::static_thread_pool pool(1);
+  exec::static_thread_pool pool(2);
   auto sched = pool.get_scheduler();
   exec::async_scope scope;
   buffer_queue<int> q(2);
 
-  scope.spawn(on(sched, coro_pop(q)));
-  std::this_thread::sleep_for(10ms);
+  (void)scope.detached_spawn(on(sched, coro_pop(q)));
+  puts("just about to sleep");
+  std::this_thread::sleep_for(1s);
+  puts("just about to request stop");
   scope.request_stop();
-  stdexec::sync_wait(scope.on_empty());
+  stdexec::sync_wait(scope.complete());
 }
