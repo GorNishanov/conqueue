@@ -104,6 +104,7 @@ public:
   }
 
   // Remove a given object from anywhere in the list
+  // Precondition: obj is in the list.
   void remove(_Item* obj) {
     // Get pointers to previous and next objects
     _Item* prev = obj->*_Prev;
@@ -124,6 +125,16 @@ public:
     // Unlink this object from the list
     obj->*_Prev = nullptr;
     obj->*_Next = nullptr;
+  }
+
+  // Remove a given object from anywhere in the list if it is in the list.
+  // Precondition: obj is in the list or was already removed from the list.
+  bool try_remove(_Item* obj) {
+    if (obj->*_Prev == nullptr && obj->*_Next == nullptr && front() != obj)
+      return false;
+
+    remove(obj);
+    return true;
   }
 
   // Get the head pointer of the list
