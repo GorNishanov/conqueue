@@ -19,8 +19,10 @@ exec::task<void> coro_push(buffer_queue<int>& q) {
 }
 
 exec::task<void> coro_pop(buffer_queue<int>& q) {
+  auto stop_token = co_await stdexec::get_stop_token();
+  printf("stop possible: %d\n", stop_token.stop_possible());
   puts("enter pop");
-  (void)q.async_pop();
+  co_await q.async_pop();
   puts("popped a value");
   REQUIRE(co_await q.async_pop() == 1);
   REQUIRE(co_await q.async_pop() == 2);
@@ -131,9 +133,9 @@ TEST_CASE("conqueue: cancellation") {
   exec::async_scope scope;
   buffer_queue<int> q(2);
 
-  (void)scope.detached_spawn(on(sched, coro_pop(q)));
+  scope.detached_spawn(on(sched, coro_pop(q)));
   puts("just about to sleep");
-  std::this_thread::sleep_for(1s);
+  std::this_thread::sleep_for(10ms);
   puts("just about to request stop");
   scope.request_stop();
   stdexec::sync_wait(scope.complete());
