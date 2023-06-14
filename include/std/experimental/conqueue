@@ -5,6 +5,7 @@
 #define _STD_EXPERIMENTAL_CONQUEUE
 #include "__detail/tracing.hpp"
 #include "stdexec/__detail/__execution_fwd.hpp"
+#include "stdexec/stop_token.hpp"
 
 #include <atomic>
 #include <deque>
@@ -395,16 +396,19 @@ template <typename T> struct buffer_queue<T>::pop_sender {
     struct cancel_callback {
       operation& self;
       void operator()() noexcept {
-        auto& cq = *self.sender.queue;
+        auto& cq = self.queue;
         unique_lock lock(cq.mutex);
-        // After we acquired lock, the operation might have already completed
-        // and was removed from the queue. Hence, try_remove.
+        // After we acquired the lock, the operation might have already
+        // completed and was removed from the queue. Hence, try_remove.
         if (cq.waiters.try_remove(&self)) {
           lock.unlock();
-          stdexec::set_stopped((Receiver&&)self->receiver);
+          stdexec::set_stopped((Receiver&&)self.receiver);
         }
       }
     };
+
+    optional<stdexec::in_place_stop_callback<cancel_callback>> stop_callback;
+    atomic<bool> ready{false};
 
     operation(buffer_queue& queue, Receiver&& receiver)
         : queue(queue), receiver(std::move(receiver)) {
@@ -421,7 +425,19 @@ template <typename T> struct buffer_queue<T>::pop_sender {
 
     friend void tag_invoke(stdexec::start_t, operation& op) noexcept {
       auto& self = op.queue;
+      auto& env = stdexec::get_env(op.receiver);
+      auto stop_token = stdexec::get_stop_token(env);
       std::unique_lock lock(self.mutex);
+      if (stop_token.stop_requested()) {
+        lock.unlock();
+        stdexec::set_stopped(std::move(op.receiver));
+        return;
+      }
+      // Store and cache result here in case it changes during execution
+      const bool stop_possible = stop_token.stop_possible();
+      if (!stop_possible) {
+        op.ready.store(true, std::memory_order_relaxed);
+      }
       // If the queue is empty, add ourselves to the waiters.
       if (self.queue.empty()) {
         // Unless, of course, the queue is closed, then return an error.
@@ -437,6 +453,10 @@ template <typename T> struct buffer_queue<T>::pop_sender {
             "async_pop: queue is empty, putting %p in the waiters queue\n",
             &op);
         self.waiters.push_back(&op);
+        // Now we are in the queue, set up cancellation callback.
+        if (stop_possible) {
+          op.stop_callback.emplace(stop_token, cancel_callback{op});
+        }
         return;
       }
 

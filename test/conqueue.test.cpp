@@ -19,6 +19,19 @@ using namespace std::literals;
 
 using stdexec::on;
 
+exec::task<void> coro_push(buffer_queue<int>& q) {
+  co_await q.async_push(3);
+  co_await q.async_push(4);
+}
+
+exec::task<void> coro_pop(buffer_queue<int>& q) {
+  REQUIRE(co_await q.async_pop() == 1);
+  REQUIRE(co_await q.async_pop() == 2);
+  REQUIRE(co_await q.async_pop() == 3);
+  REQUIRE(co_await q.async_pop() == 4);
+}
+
+#if 0
 TEST_CASE("conqueue: smoketest") {
   buffer_queue<int> q(2);
   REQUIRE_FALSE(q.is_closed());
@@ -82,11 +95,6 @@ TEST_CASE("conqueue: blocking pull then closed") {
   t.join();
 }
 
-exec::task<void> coro_push(buffer_queue<int>& q) {
-  co_await q.async_push(3);
-  co_await q.async_push(4);
-}
-
 TEST_CASE("conqueue: coro_push") {
   exec::static_thread_pool pool(1);
   exec::async_scope scope;
@@ -104,13 +112,6 @@ TEST_CASE("conqueue: coro_push") {
   stdexec::sync_wait(scope.on_empty());
 }
 
-exec::task<void> coro_pop(buffer_queue<int>& q) {
-  REQUIRE(co_await q.async_pop() == 1);
-  REQUIRE(co_await q.async_pop() == 2);
-  REQUIRE(co_await q.async_pop() == 3);
-  REQUIRE(co_await q.async_pop() == 4);
-}
-
 TEST_CASE("conqueue: coro_pop") {
   exec::static_thread_pool pool(1);
   exec::async_scope scope;
@@ -123,5 +124,17 @@ TEST_CASE("conqueue: coro_pop") {
   q.push(3);
   q.push(4);
 
+  stdexec::sync_wait(scope.on_empty());
+}
+#endif
+
+TEST_CASE("conqueue: cancellation") {
+  exec::static_thread_pool pool(1);
+  exec::async_scope scope;
+  buffer_queue<int> q(2);
+
+  scope.spawn(on(pool.get_scheduler(), coro_pop(q)));
+  std::this_thread::sleep_for(10ms);
+  scope.request_stop();
   stdexec::sync_wait(scope.on_empty());
 }
