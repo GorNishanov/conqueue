@@ -4,8 +4,7 @@
 #ifndef _STD_EXPERIMENTAL_CONQUEUE
 #define _STD_EXPERIMENTAL_CONQUEUE
 #include "__detail/tracing.hpp"
-#include "stdexec/__detail/__execution_fwd.hpp"
-#include "stdexec/stop_token.hpp"
+#include <std/experimental/__detail/intrusive_list.hpp>
 
 #include <atomic>
 #include <deque>
@@ -16,8 +15,8 @@
 #include <system_error>
 #include <variant>
 
-#include <std/experimental/__detail/intrusive_list.hpp>
 #include <stdexec/execution.hpp>
+#include <stdexec/stop_token.hpp>
 
 namespace std::experimental {
 enum class conqueue_errc { success, empty, full, closed };
@@ -407,7 +406,10 @@ template <typename T> struct buffer_queue<T>::pop_sender {
       }
     };
 
-    optional<stdexec::in_place_stop_callback<cancel_callback>> stop_callback;
+    using __on_stop = std::optional<typename stdexec::stop_token_of_t<
+        stdexec::env_of_t<Receiver>&>::template callback_type<cancel_callback>>;
+
+    __on_stop stop_callback;
     atomic<bool> ready{false};
 
     operation(buffer_queue& queue, Receiver&& receiver)
@@ -425,18 +427,25 @@ template <typename T> struct buffer_queue<T>::pop_sender {
 
     friend void tag_invoke(stdexec::start_t, operation& op) noexcept {
       auto& self = op.queue;
-      auto& env = stdexec::get_env(op.receiver);
+      auto&& env = stdexec::get_env(op.receiver);
       auto stop_token = stdexec::get_stop_token(env);
+      constexpr bool sp = std::unstoppable_token<decltype(stop_token)>;
+
       std::unique_lock lock(self.mutex);
-      if (stop_token.stop_requested()) {
-        lock.unlock();
-        stdexec::set_stopped(std::move(op.receiver));
-        return;
+      if constexpr (sp) {
+        if (stop_token.stop_requested()) {
+          lock.unlock();
+          stdexec::set_stopped(std::move(op.receiver));
+          return;
+        }
       }
+
       // Store and cache result here in case it changes during execution
       const bool stop_possible = stop_token.stop_possible();
-      if (!stop_possible) {
-        op.ready.store(true, std::memory_order_relaxed);
+      if constexpr (sp) {
+        if (!stop_possible) {
+          op.ready.store(true, std::memory_order_relaxed);
+        }
       }
       // If the queue is empty, add ourselves to the waiters.
       if (self.queue.empty()) {
@@ -453,9 +462,11 @@ template <typename T> struct buffer_queue<T>::pop_sender {
             "async_pop: queue is empty, putting %p in the waiters queue\n",
             &op);
         self.waiters.push_back(&op);
-        // Now we are in the queue, set up cancellation callback.
-        if (stop_possible) {
-          op.stop_callback.emplace(stop_token, cancel_callback{op});
+        if constexpr (sp) {
+          // Now we are in the queue, set up cancellation callback.
+          if (stop_possible) {
+            op.stop_callback.emplace(stop_token, cancel_callback{op});
+          }
         }
         return;
       }
