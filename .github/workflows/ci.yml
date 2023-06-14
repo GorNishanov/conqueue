@@ -50,4 +50,4 @@ jobs:
         timeout-minutes: 1
         run: |
           cd build
-          ctest -VV --output-on-failure
+          ctest --timeout 20 -VV --output-on-failure
