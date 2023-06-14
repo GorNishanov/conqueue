@@ -15,7 +15,7 @@ template <auto _Next, auto _Prev> class intrusive_list;
 template <class _Item, _Item* _Item::*_Next, _Item* _Item::*_Prev>
 class intrusive_list<_Next, _Prev> {
 public:
-  bool empty() const { return head_ == nullptr; }
+  [[nodiscard]] bool empty() const { return head_ == nullptr; }
 
   // Insert an object at the front of the list
   void push_front(_Item* obj) {
@@ -26,11 +26,11 @@ public:
     // Update the head pointer
     if (head_)
       head_->*_Prev = obj;
-    head_ = obj;
-
-    // Update the tail pointer if the list was empty
-    if (!tail_)
+    else
+      // Update the tail pointer if the list was empty
       tail_ = obj;
+
+    head_ = obj;
   }
 
   // Insert an object at the back of the list
@@ -42,15 +42,15 @@ public:
     // Update the tail pointer
     if (tail_)
       tail_->*_Next = obj;
-    tail_ = obj;
-
-    // Update the head pointer if the list was empty
-    if (!head_)
+    else
+      // Update the head pointer if the list was empty
       head_ = obj;
+
+    tail_ = obj;
   }
 
   // Remove an object from the front of the list and return it
-  _Item* pop_front() {
+  [[nodiscard]] _Item* pop_front() {
     // Check if the list is empty
     if (!head_)
       return nullptr;
@@ -77,7 +77,7 @@ public:
   }
 
   // Remove an object from the back of the list and return it
-  _Item* pop_back() {
+  [[nodiscard]] _Item* pop_back() {
     // Check if the list is empty
     if (!tail_)
       return nullptr;
