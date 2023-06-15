@@ -25,6 +25,9 @@ exec::task<void> coro_push(buffer_queue<int>& q) {
 }
 
 exec::task<void> coro_pop(buffer_queue<int>& q) {
+  auto stop_token = co_await stdexec::get_stop_token();
+  printf("stop possible: %d\n", stop_token.stop_possible());
+
   REQUIRE(co_await q.async_pop() == 1);
   REQUIRE(co_await q.async_pop() == 2);
   REQUIRE(co_await q.async_pop() == 3);

@@ -1,3 +1,5 @@
 add_executable(tests conqueue.test.cpp intrusive_list.test.cpp)
+add_executable(repro repro.cpp)
+target_link_libraries(repro PRIVATE stdexec)
 target_link_libraries(tests PRIVATE Catch2::Catch2WithMain conqueue)
 catch_discover_tests(tests)
