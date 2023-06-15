@@ -2,4 +2,4 @@ build
 .cache
 .DS_Store
 *.html
-!d0260r*.html
+!?0260r*.html
