@@ -51,7 +51,7 @@ td { text-align: left; vertical-align: top;
 <table style="margin-right: 0em">
 <tbody>
 <tr><th>Project:</th><td>ISO JTC1/SC22/WG21: Programming Language C++</td></tr>
-<tr><th>Number:</th><td>D0260R7</td></tr>
+<tr><th>Number:</th><td>D0260R6</td></tr>
 <tr><th>Date:</th><td>2023-06-15</td></tr>
 <tr><th>Audience</th><td>LEWG, SG1</td></tr>
 <tr><th>Revises:</th><td>P0260R6</td></tr>
@@ -527,6 +527,29 @@ closed. The secind version,
 if the queue is empty and closed, returns <code>std::nullopt</code> and 
 sets <code><var>ec</var></code> to <code>std::error_code(errc::closed)</code>.
 If queue is empty and open, the operation blocks until an element is available.
+</p>
+
+<p> <b>DISCUSSION: </b>
+In the original buffer_queue paper, the pop function had signature 
+<code>T pop_value()</code>. Subsequently, it was changed to 
+<code>void pop(T&)</code> due to concern about the problem of loosing elements.
+</p>
+<p>
+Unlike STL's combinations of <code>void pop()</code> and <code>T& front()</code> 
+that are possible for synchronous cases, 
+such a solution does not work for concurrent queues, 
+where we cannot observe the value before popping it from the queue.
+</p>
+<p>
+Comparing <code>T pop()</code> and <code>void pop(T&)</code> we believe that 
+they are equivalent from exception safety standpoint and <code>T pop()</code> 
+wins on ergonomics of usage.
+<p>
+Naming wise, we chose <code>T pop()</code> rather than 
+<code>T pop_value()</code> for consistency with the rest of the APIs and due to 
+<code>[[nodiscard]]</code> guarding against misuse 
+(thus if a user imagined that pop API is <code>void pop()</code> by analogy with 
+<code>std::stack</code>, for example, a compiler error will quickly bring them to their senses.
 </p>
 
 </dd>
