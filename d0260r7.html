@@ -151,6 +151,7 @@ to dynamically construct and safely share concurrent queues.
   
   <ul>
     <li>Fixing typos.</li>
+    <li>Implement LEWG feedback to derive conqueue_errc from system_error</li>
   </ul>
   
 <p>
@@ -460,8 +461,13 @@ in semantics weaker than a serial queue.
 </p>
 
 <p>
-  TBB
-</p>
+  TBB - 
+  <b> TODO: Detlef, there was a comment in LEWG that TBB provides both. Here is the link to their docs:
+    <a href="https://oneapi-src.github.io/oneTBB/main/tbb_userguide/Concurrent_Queue_Classes.html">TBB Conqurrent Queue Classes</a>
+    we need to do something here to address this comment.
+  </b>
+  </p>
+
 
 
 
@@ -480,8 +486,8 @@ and then extend those operations to cover other important issues.
 <pre>
   enum class conqueue_errc { success, empty, full, closed };
 
-  template <>
-  struct is_error_code_enum<conqueue_errc> : public true_type {};
+  template &lt;&gt;
+  struct is_error_code_enum&lt;conqueue_errc&gt; : public true_type {};
 
   const error_category& conqueue_category() noexcept;
 
@@ -489,11 +495,11 @@ and then extend those operations to cover other important issues.
 
   error_condition make_error_condition(conqueue_errc e) noexcept;
 
-  class conqueue_error : public runtime_error;
+  class conqueue_error : public system_error;
 </pre>
 
 <pp>
-That will be reported from concurrent queue operations.
+These errors will be reported from concurrent queue operations as specified below.
 </pp>
 
 <h3><a name="basic_operations">Basic Operations</a></h3>
@@ -511,32 +517,37 @@ The basic operations are:
 <dl>
 
 <dt><code>void
-<var>queue</var>::push(<var>Element</var>);</code></dt>
+<var>queue</var>::push(const T& x);</code></dt>
+<dt><code>void
+<var>queue</var>::push(T&& x);</code></dt>
 <dt><code>bool
-<var>queue</var>::push(<var>Element</var>, std::error_code& <var>ec</var>);</code></dt>
+<var>queue</var>::push(const T& x, std::error_code& ec);</code></dt>
+<dt><code>bool
+<var>queue</var>::push(T&& x, std::error_code& ec);</code></dt>
 <dd>
 <p>
-Push the <code><var>Element</var></code> onto the queue.
-The first version throws std::conqueue_error(errc::closed) if the queue is closed.
+Pushes <code>x</code> onto the queue via copy or move construction.
+The first version throws <code>std::conqueue_error(conqueue_errc::closed)</code> if the queue is closed.
 The second version returns <code>true</code> on success, and </code> <code>false</code> and sets <code><var>ec</var></code>
-to <code>error_code(errc::closed)</code> if the queue is closed.
+to <code>error_code(conqueue_errc::closed)</code> if the queue is closed.
 </p>
 </dd>
 
-<dt><code><var>Element</var> <var>queue</var>::pop();</code></dt>
-<dt><code>std::optional&lt;<var>Element</var>&gt;
-    <var>queue</var>::pop(std::error_code& <var>ec</var>);</code></dt>
+<dt><code>T <var>queue</var>::pop();</code></dt>
+<dt><code>std::optional&lt;T&gt;
+    <var>queue</var>::pop(std::error_code& ec);</code></dt>
 <dd>
 <p>
-Pop an <code><var>Element</var></code> from the queue.
-The element will be moved out of the queue in preference to being copied.
-The first version throws std::conqueue_error(errc::closed) if the queue is empty and 
-closed. The secind version, 
+Pops a value from the queue via move construction into the return value.
+The first version throws <code>std::conqueue_error(conqueue_errc::closed)</code> if the queue is empty and 
+closed; the second version, 
 if the queue is empty and closed, returns <code>std::nullopt</code> and 
-sets <code><var>ec</var></code> to <code>std::error_code(errc::closed)</code>.
+sets <code>ec</code> to <code>std::error_code(conqueue_errc::closed)</code>.
 If queue is empty and open, the operation blocks until an element is available.
 </p>
 
+<!-- TODO: Detlef, confirm that this removal makes sense. It has already been seen by LEWG.
+  Now it just clutters the APIs.
 <p> <b>DISCUSSION: </b>
 In the original buffer_queue paper, the pop function had signature 
 <code>T pop_value()</code>. Subsequently, it was changed to 
@@ -559,7 +570,7 @@ Naming wise, we chose <code>T pop()</code> rather than
 (thus if a user imagined that pop API is <code>void pop()</code> by analogy with 
 <code>std::stack</code>, for example, a compiler error will quickly bring them to their senses.
 </p>
-
+-->
 </dd>
 
 <p>
@@ -569,7 +580,10 @@ These operations may block for mutual exclusion as well.
 </p>
 
 <p>
-  These version of APIs were reaffirmed by SG1 in Varna
+  <b>TODO: Detlef, the following paragraph needs to be updated to reflect to reflect LEWG non-answer :-). The paper
+    number for std::expected exploration is P2921R0:
+  </b>
+    These version of APIs were reaffirmed by SG1 in Varna
   with one 
   <b>question for LEWG</b>. The pattern for 
   error reporting APIs should it be styled after <code>filesystem</code>
@@ -581,14 +595,16 @@ These operations may block for mutual exclusion as well.
 
 <dl>
 <dt><code>sender auto
-<var>queue</var>::async_push(<var>Element</var>);</code></dt>
+<var>queue</var>::async_push(T x);</code></dt>
 <dt><code>sender auto
-<var>queue</var>::async_pop(<var>Element</var>);</code></dt>
+<var>queue</var>::async_pop();</code></dt>
 <dd>
 <p>
 These operations return a sender that will push or pop the element.
-Senders should support cancellation if the receiver 
-is no longer interested in the value.
+Senders must support cancellation and if the receiver 
+is currently waiting on a push or pop operation and no longer
+interested in performing the operation, it should be removed
+from any waiting queues, if any, and be completed with <code>std::execution::set_stopped</code>.
 </p>
 </dd>
 </dl>
@@ -607,16 +623,18 @@ to do other work rather than wait for a pop on an empty queue.
 <dl>
 
 <dt><code>bool
-<var>queue</var>::try_push(const <var>Element</var>&amp;, std::error_code& ec);</code></dt>
+<var>queue</var>::try_push(const T&amp; x, std::error_code& ec);</code></dt>
 <dt><code>bool
-  <var>queue</var>::try_push(<var>Element</var>&&, std::error_code& <var>ec</var>);</code></dt>
+  <var>queue</var>::try_push(T&& x, std::error_code& ec);</code></dt>
   
 <dd>
 <p>
-If the queue is full or closed, return false and sets the respective status in the ec.
-Otherwise, push the <code><var>Element</var></code> onto the queue
-and returns <code>true</code>.
+If the queue is full or closed, returns <code>false</code> and sets the respective status in the <code>ec</code>.
+Otherwise, push the value onto the queue via copy or move construction and returns <code>true</code>.
 </p>
+<!--
+  TODO: Detlef. Confirm that removing the following makes sense.
+  Since LEWG has seen this. We probably don't need this here.
 <b>REVISITED in Varna</b>
   <p>
     The following version was introduced in response to LEWG-I concerns about
@@ -624,7 +642,7 @@ and returns <code>true</code>.
   </p>
 
     <code>queue_op_status
-      <var>queue</var>::try_push(<var>Element</var>&amp;&amp;, <var>Element</var>&amp;);</code>
+      <var>queue</var>::try_push(T&amp;&amp;, T&amp;);</code>
 <p>
     However, SG1 reaffirmed the APIs above with the following rationale:
   </p>
@@ -633,28 +651,27 @@ and returns <code>true</code>.
   </p>
   <pre>
     T x = get_something();
-    if (try_push(std::move(x))) ...
+    if (q.try_push(std::move(x))) ...
   </pre>
   <p>
   With two parameter version:
 </p>
   <pre>
     T x;
-    if (try_push(get_something(), x)) ...
+    if (q.try_push(get_something(), x)) ...
   </pre>
   <p>
     Ergonomically they are roughly identical. API is slightly simpler with one argument version, therefore, we reverted to original one argument version.    
   </p>
   </quote>
 </dd>
-
-<dt><code>bool
-<var>queue</var>::try_pop(std::error_code& <var>ec</var>);</code></dt>
+-->
+<dt><code>optional&lt;T&gt;
+<var>queue</var>::try_pop(std::error_code& ec);</code></dt>
 <dd>
 <p>
-If the queue is empty, return <code>false</code> and set ec to <code>conqueue_errc::empty</code>.
-Otherwise, pop the <code><var>Element</var></code> from the queue.
-The element will be moved out of the queue in preference to being copied.
+If the queue is empty, returns <code>nullopt</code> and set ec to <code>conqueue_errc::empty</code>.
+Otherwise, pop the element from the queue via move construction into the optional.
 Return <code>true</code> and set <var>ec</var> to <code>conqueue_errc::success</code>.
 </p>
 </dd>
@@ -733,20 +750,19 @@ Return true iff the queue is closed.
 
 <p>
 The above operations require element types with
-copy/move constructors, copy/move assignment operators, and destructor.
+copy/move constructors, and destructor.
 These operations may be trivial.
-The copy/move constructors and copy/move assignment operators may throw,
+The copy/move constructors operators may throw,
 but must leave the objects in a valid state
 for subsequent operations.
 </p>
-
 
 <h3><a name="exception_handling">Exception Handling</a></h3>
 
 <p>
     <code>push()</code> and <code>pop()</code> may throw an exceptions
     of type <code>conqueue_error</code> that's derived from
-    <code>std::runtime exception</code> and will contain a
+    <code>std::system_error</code> and will contain a
     <code>conqueue_errc</code>.
 </p>
 
@@ -813,7 +829,7 @@ const error_category& conqueue_category() noexcept;
 error_code make_error_code(conqueue_errc e) noexcept;
 error_condition make_error_condition(conqueue_errc e) noexcept;
 
-class conqueue_error : runtime_exception { ... };
+class conqueue_error : system_error { ... };
 
 template &lt;typename T,
   class Allocator = std::allocator&lt;T&gt;&gt;
@@ -824,19 +840,31 @@ class buffer_queue
   buffer_queue&amp; operator =(const buffer_queue&amp;) = delete;
 public:
   typedef T value_type;
+
+  // construct/destroy
   explicit buffer_queue(size_t max_elems, const Allocator&amp; alloc = Allocator());
-  template <typename ItBegin, typename ItEnd>
-  buffer_queue(ItBegin begin, ItEnd end, size_t max_elems = 0, const Allocator&amp; alloc = Allocator());
-  explicit buffer_queue(std::initializer_list<T>, size_t max_elems = 0, const Allocator&amp; alloc = Allocator());
+  explicit buffer_queue(std::initializer_list&lt;T&gt;, size_t max_elems = 0, 
+                        const Allocator&amp; alloc = Allocator());
+  template &lt;typename InputIterator&gt;
+    buffer_queue(InputIterator begin, InputIterator end, size_t max_elems = 0,
+                 const Allocator&amp; alloc = Allocator());
+  template &lt;<it>container-compatible-range</it>&lt;T&gt; R&gt;
+    buffer_queue(from_range_t, R&& rg, size_t max_elems = 0, 
+                 const Allocator&amp; alloc = Allocator());
+
   ~buffer_queue() noexcept;
 
-  void close() noexcept;
+  // observers
+  size_t capacity() const noexcept;
   bool is_closed() const noexcept;
   static constexpr bool is_always_lock_free() noexcept;
 
+  // modifiers
+  void close() noexcept;
+
   T pop();
-  optional<T> pop(std::error_code& ec);
-  optional<T> try_pop(std::error_code& ec);
+  optional&lt;T&gt; pop(std::error_code& ec);
+  optional&lt;T&gt; try_pop(std::error_code& ec);
 
   void push(const T& x);
   void push(T&& x);
@@ -853,7 +881,7 @@ public:
 
 <pp>
 constructors that take initializing sequence are allowed to omit
-size_t max_elem argument that will be then assumed to be equil to 
+size_t max_elem argument that will be then assumed to be equal to 
 the size of the initialization sequence.
 </pp>
 
