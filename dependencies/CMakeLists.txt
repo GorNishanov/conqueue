@@ -15,7 +15,7 @@ FetchContent_Declare(
 FetchContent_Declare(
   stdexec
   GIT_REPOSITORY https://github.com/NVIDIA/stdexec
-  GIT_TAG        c4fac498b0c96dfc5cf4478e156f02fa4e13e49b # Jun 10, 2023
+  GIT_TAG        068e840dd529293ecdda00e87b25e0f7cfd57fbb # Jun 15, 2023
 )
 
 FetchContent_MakeAvailable(Catch2 stdexec)
