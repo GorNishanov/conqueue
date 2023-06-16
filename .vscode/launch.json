@@ -9,7 +9,7 @@
             "request": "launch",
             "name": "Debug",
             "program": "${command:cmake.launchTargetPath}",
-            "args": [],
+            "args": ["ring_buffer*"],
             "cwd": "${command:cmake.launchTargetDirectory}"
         }
     ]

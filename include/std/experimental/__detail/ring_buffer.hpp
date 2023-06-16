@@ -82,11 +82,11 @@ public:
 
     try {
       T result{std::move(ref)};
-      alloc_.destroy(std::addressof(ref));
+      alloc_traits::destroy(alloc_, std::addressof(ref));
       return result;
     } catch (...) {
       // If the move constructor throws, destroy the element nonetheless.
-      alloc_.destroy(std::addressof(ref));
+      alloc_traits::destroy(alloc_, std::addressof(ref));
       throw;
     }
   }
