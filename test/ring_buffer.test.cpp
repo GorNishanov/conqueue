@@ -83,3 +83,13 @@ TEST_CASE("ring_buffer: capacity 1") {
   }
   verify_counts(0, 2, 4, 0, 6);
 }
+
+TEST_CASE("ring_buffer larger capacity") {
+  ring_buffer<Item> rb{3};
+  for (int i = 0; i < 20; i += 2) {
+    rb.push_back(Item{i});
+    rb.push_back(Item{i + 1});
+    REQUIRE(rb.pop_front().val == i);
+    REQUIRE(rb.pop_front().val == i + 1);
+  }
+}
