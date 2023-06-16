@@ -1,8 +1,9 @@
 # fetch dependencies
 include(FetchContent)
 
-# do not build tests for subprojects
+# do not build tests or examples for subprojects
 set(BUILD_TESTING OFF)
+set(BUILD_EXAMPLES OFF)
 
 Include(FetchContent)
 
