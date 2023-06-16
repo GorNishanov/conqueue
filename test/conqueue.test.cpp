@@ -125,3 +125,19 @@ TEST_CASE("conqueue: coro_pop") {
 
   stdexec::sync_wait(scope.on_empty());
 }
+
+exec::task<void> coro_stuck_pop(buffer_queue<int>& q) {
+  co_await q.async_pop();
+}
+
+TEST_CASE("conqueue: cancellation") {
+  exec::static_thread_pool pool(1);
+  auto sched = pool.get_scheduler();
+  exec::async_scope scope;
+  buffer_queue<int> q(2);
+
+  scope.spawn(on(sched, coro_stuck_pop(q)));
+  std::this_thread::sleep_for(10ms);
+  scope.request_stop();
+  stdexec::sync_wait(scope.on_empty());
+}

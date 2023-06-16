@@ -17,6 +17,7 @@
 #include <std/experimental/__detail/intrusive_list.hpp>
 #include <std/experimental/__detail/ring_buffer.hpp>
 #include <stdexec/execution.hpp>
+#include <stdexec/stop_token.hpp>
 
 namespace std::experimental {
 enum class conqueue_errc { success, empty, full, closed };
@@ -395,19 +396,38 @@ struct buffer_queue<T, Alloc>::pop_sender {
     buffer_queue& queue;
     Receiver receiver;
 
+    // Constructor of the stop_callback may invoke stop_callback, we use the
+    // following technique to avoid running stop_callback if it is being invoked
+    // from its constructor. we start with count 2, one for the registration
+    // operation, another for cancellation. Once we register stop_callback, we
+    // drop the counter by 1. If stop_callback is invoked, we drop the counter
+    // by 1 again. Thus, if during registration, stop_callback was invoked,
+    // registration code will observe the counter to be 0 and thus understands
+    // it needs to deque the waiter and call stopped on the receiver.
+    atomic<int> stop_count{2};
+
     struct cancel_callback {
       operation& self;
       void operator()() noexcept {
-        auto& cq = *self.sender.queue;
+        auto& cq = self.queue;
+        if (--self.stop_count != 0)
+          // registration code is still running, we are done.
+          return;
+
         unique_lock lock(cq.mutex);
-        // After we acquired lock, the operation might have already completed
-        // and was removed from the queue. Hence, try_remove.
+        // After we acquired the lock, the operation might have already
+        // completed and was removed from the queue. Hence, try_remove.
         if (cq.waiters.try_remove(&self)) {
           lock.unlock();
-          stdexec::set_stopped((Receiver&&)self->receiver);
+          stdexec::set_stopped((Receiver&&)self.receiver);
         }
       }
     };
+
+    using __on_stop = std::optional<typename stdexec::stop_token_of_t<
+        stdexec::env_of_t<Receiver>&>::template callback_type<cancel_callback>>;
+
+    __on_stop stop_callback;
 
     operation(buffer_queue& queue, Receiver&& receiver)
         : queue(queue), receiver(std::move(receiver)) {
@@ -424,7 +444,18 @@ struct buffer_queue<T, Alloc>::pop_sender {
 
     friend void tag_invoke(stdexec::start_t, operation& op) noexcept {
       auto& self = op.queue;
+      auto stop_token = stdexec::get_stop_token(stdexec::get_env(op.receiver));
+      constexpr bool stoppable = !std::unstoppable_token<decltype(stop_token)>;
+
       std::unique_lock lock(self.mutex);
+      if constexpr (stoppable) {
+        if (stop_token.stop_requested()) {
+          lock.unlock();
+          stdexec::set_stopped((Receiver&&)op.receiver);
+          return;
+        }
+      }
+
       // If the queue is empty, add ourselves to the waiters.
       if (self.queue.empty()) {
         // Unless, of course, the queue is closed, then return an error.
@@ -440,6 +471,18 @@ struct buffer_queue<T, Alloc>::pop_sender {
             "async_pop: queue is empty, putting %p in the waiters queue\n",
             &op);
         self.waiters.push_back(&op);
+        // We are in the queue, set up the stop callback.
+        if constexpr (stoppable) {
+          op.stop_callback.emplace(stop_token, cancel_callback{op});
+          if (--op.stop_count == 0) {
+            // cancel callback has already been called, observed that we are in
+            // the middle of construction and left cancellation up to us.
+            self.waiters.remove(&op);
+            lock.unlock();
+            stdexec::set_stopped((Receiver&&)op.receiver);
+          }
+        }
+
         return;
       }
 
