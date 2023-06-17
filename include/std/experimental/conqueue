@@ -77,6 +77,8 @@ template <typename T, typename Alloc = std::allocator<T>> class buffer_queue {
       return nullptr;
     }
 
+    const T& get_rvalue() { return *std::get<const T*>(value); }
+
     ~waiter_base() noexcept {
       STDEX_CONQUEUE_LOG("waiter_base: destroying %p\n", this);
     }
@@ -356,7 +358,7 @@ optional<T> buffer_queue<T, Alloc>::locked_pop(unique_lock<std::mutex>& lock,
     if (auto* lval = waiter->try_get_lvalue())
       queue.push_back(std::move(*lval));
     else
-      queue.push_back(*std::get<const T*>(waiter->value));
+      queue.push_back(waiter->get_rvalue());
     lock.unlock();
     STDEX_CONQUEUE_LOG("unlocking pusher %p\n", waiter);
     waiter->complete(waiter);
@@ -404,7 +406,7 @@ optional<T> buffer_queue<T, Alloc>::pop(error_code& ec) {
     if (auto* lval = waiter.try_get_lvalue())
       return std::move(*lval);
     else
-      return *std::get<const T*>(waiter.value);
+      return waiter.get_rvalue();
   }
 
   return locked_pop(lock, ec);
@@ -456,8 +458,7 @@ struct buffer_queue<T, Alloc>::pop_sender {
         else if (auto* lval = self->try_get_lvalue())
           stdexec::set_value((Receiver&&)self->receiver, std::move(*lval));
         else
-          stdexec::set_value((Receiver&&)self->receiver,
-                             *std::get<const T*>(self->value));
+          stdexec::set_value((Receiver&&)self->receiver, self->get_rvalue());
       };
     }
 
@@ -492,7 +493,7 @@ struct buffer_queue<T, Alloc>::pop_sender {
         if (auto* lval = waiter->try_get_lvalue())
           self.queue.push_back(std::move(*lval));
         else
-          self.queue.push_back(*std::get<const T*>(waiter->value));
+          self.queue.push_back(waiter->get_rvalue());
         lock.unlock();
         STDEX_CONQUEUE_LOG("async_pop: unlocking pusher %p\n", waiter);
         waiter->complete(waiter);
