@@ -15,13 +15,13 @@ Inspired by
 - https://wg21.link/p2882r0 An Event Model for C++ Executors
 
 ```c++
-template <typename T> class buffer_queue {
+template <typename T, typename Alloc = std::allocator<T>> class buffer_queue {
 public:
   using value_type = T;
 
-  explicit buffer_queue(size_t max_elems);
-  template <typename Iter>
-  buffer_queue(size_t max_elems, Iter first, Iter last);
+  explicit buffer_queue(size_t max_elems, Alloc alloc = Alloc());
+  template <typename InputIterator>
+  buffer_queue(Iter first, Iter last, size_t max_elems, Alloc alloc = Alloc());
   ~buffer_queue() noexcept;
 
   // observers

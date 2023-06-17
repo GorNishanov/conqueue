@@ -16,6 +16,7 @@
 
 #include <std/experimental/__detail/intrusive_list.hpp>
 #include <std/experimental/__detail/ring_buffer.hpp>
+#include <std/experimental/__detail/spinlock.hpp>
 #include <stdexec/execution.hpp>
 
 namespace std::experimental {
@@ -58,6 +59,8 @@ template <typename T, typename Alloc = std::allocator<T>> class buffer_queue {
   buffer_queue(const buffer_queue&) = delete;
   buffer_queue& operator=(const buffer_queue&) = delete;
 
+  using lock_t = __detail::spinlock;
+
   struct pop_sender;
   struct push_sender;
 
@@ -86,10 +89,10 @@ template <typename T, typename Alloc = std::allocator<T>> class buffer_queue {
 
   struct blocking_waiter;
 
-  std::optional<T> locked_pop(unique_lock<mutex>& lock, error_code& ec);
+  std::optional<T> locked_pop(unique_lock<lock_t>& lock, error_code& ec);
 
   template <typename U>
-  bool locked_push(unique_lock<mutex>& lock, U&& value, error_code& ec);
+  bool locked_push(unique_lock<lock_t>& lock, U&& value, error_code& ec);
 
   template <typename U>
   bool push_impl(U&& x, error_code& ec, bool error_on_full = false);
@@ -124,7 +127,7 @@ public:
   pop_sender async_pop() noexcept;
 
 private:
-  std::mutex mutex;
+  lock_t mutex;
   __detail::ring_buffer<T, Alloc> queue;
   // If the queue is empty, waiters are the readers.
   // If the queue is full, waiters are the writers.
@@ -160,8 +163,8 @@ void buffer_queue<T, Alloc>::close() noexcept {
 
 template <typename T, typename Alloc>
 template <typename U>
-bool buffer_queue<T, Alloc>::locked_push(unique_lock<std::mutex>& lock,
-                                         U&& value, error_code& ec) {
+bool buffer_queue<T, Alloc>::locked_push(unique_lock<lock_t>& lock, U&& value,
+                                         error_code& ec) {
   // The caller acquired the lock and verified that the queue is not full.
   ec = {};
 
@@ -351,7 +354,7 @@ typename buffer_queue<T, Alloc>::push_sender buffer_queue<T, Alloc>::async_push(
 }
 
 template <typename T, typename Alloc>
-optional<T> buffer_queue<T, Alloc>::locked_pop(unique_lock<std::mutex>& lock,
+optional<T> buffer_queue<T, Alloc>::locked_pop(unique_lock<lock_t>& lock,
                                                error_code& ec) {
   // The caller already verified that the queue is not empty.
   ec = {};
