@@ -105,15 +105,10 @@ public:
   // modifiers
   void close() noexcept;
 
-  pop_sender async_pop() noexcept;
   T pop();
   std::optional<T> pop(std::error_code& ec);
   std::optional<T> try_pop(std::error_code& ec);
 
-  // For expediency push(T&&) and push(T const&) were collapsed into
-  // push(T). Real implementation can split them up.
-
-  push_sender async_push(T x) noexcept(is_nothrow_move_constructible_v<T>);
   void push(const T& x);
   bool push(const T& x, error_code& ec);
   bool try_push(const T& x, error_code& ec);
@@ -121,6 +116,12 @@ public:
   void push(T&& x);
   bool push(T&& x, error_code& ec);
   bool try_push(T&& x, error_code& ec);
+
+  // async modifiers
+  push_sender
+  async_push(const T& x) noexcept(is_nothrow_copy_constructible_v<T>);
+  push_sender async_push(T&& x) noexcept(is_nothrow_move_constructible_v<T>);
+  pop_sender async_pop() noexcept;
 
 private:
   std::mutex mutex;
@@ -271,7 +272,7 @@ struct buffer_queue<T, Alloc>::blocking_waiter : waiter_base {
 
 template <typename T, typename Alloc>
 struct buffer_queue<T, Alloc>::push_sender {
-  buffer_queue* queue;
+  buffer_queue& queue;
   T value;
 
   using is_sender = void;
@@ -281,12 +282,12 @@ struct buffer_queue<T, Alloc>::push_sender {
                                      stdexec::set_stopped_t()>;
 
   template <typename Receiver> struct operation : waiter_base {
-    push_sender sender;
+    buffer_queue& queue;
     Receiver receiver;
 
     operation(push_sender&& sender, Receiver&& receiver)
-        : sender(std::move(sender)), receiver(std::move(receiver)) {
-      this->value = std::addressof(sender.value);
+        : queue(sender.queue), receiver(std::move(receiver)) {
+      this->value = std::move(sender.value);
       this->complete = [](waiter_base* w) noexcept {
         auto* self = static_cast<operation*>(w);
         if (auto* errc = get_if<conqueue_errc>(&self->value))
@@ -298,7 +299,7 @@ struct buffer_queue<T, Alloc>::push_sender {
     }
 
     friend void tag_invoke(stdexec::start_t, operation& op) noexcept {
-      auto& self = *op.sender.queue;
+      auto& self = op.queue;
       std::unique_lock lock(self.mutex);
       if (self.closed) {
         lock.unlock();
@@ -317,14 +318,14 @@ struct buffer_queue<T, Alloc>::push_sender {
       // See if there are any waiters, if so, pass the value directly to them.
       if (!self.waiters.empty()) {
         auto* waiter = self.waiters.pop_front();
-        waiter->value = &op.sender.value;
+        waiter->value = std::move(std::get<T>(op.value));
         lock.unlock();
         STDEX_CONQUEUE_LOG("async push: unlocking reader %p\n", waiter);
         waiter->complete(waiter);
       } else {
         STDEX_CONQUEUE_LOG("async push: queue is not full, pushing value %d\n",
-                           op.sender.value);
-        self.queue.push_back(std::move(op.sender.value));
+                           std::get<T>(op.value));
+        self.queue.push_back(std::move(std::get<T>(op.value)));
       }
       stdexec::set_value((Receiver&&)op.receiver);
     }
@@ -339,8 +340,14 @@ struct buffer_queue<T, Alloc>::push_sender {
 
 template <typename T, typename Alloc>
 typename buffer_queue<T, Alloc>::push_sender buffer_queue<T, Alloc>::async_push(
-    T x) noexcept(is_nothrow_move_constructible_v<T>) {
-  return {this, std::move(x)};
+    T&& x) noexcept(is_nothrow_move_constructible_v<T>) {
+  return {*this, std::move(x)};
+}
+
+template <typename T, typename Alloc>
+typename buffer_queue<T, Alloc>::push_sender buffer_queue<T, Alloc>::async_push(
+    const T& x) noexcept(is_nothrow_copy_constructible_v<T>) {
+  return {*this, x};
 }
 
 template <typename T, typename Alloc>
