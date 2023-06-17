@@ -20,12 +20,11 @@ public:
   using value_type = T;
 
   explicit buffer_queue(size_t max_elems, Alloc alloc = Alloc());
-  template <typename InputIterator>
-  buffer_queue(Iter first, Iter last, size_t max_elems, Alloc alloc = Alloc());
   ~buffer_queue() noexcept;
 
   // observers
   bool is_closed() noexcept;
+  size_t capacity() const noexcept;
 
   // modifiers
   void close() noexcept;

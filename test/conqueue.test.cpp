@@ -125,3 +125,21 @@ TEST_CASE("conqueue: coro_pop") {
 
   stdexec::sync_wait(scope.on_empty());
 }
+
+#if 0
+// consider if we need to support a queue with zero capacity
+TEST_CASE("conqueue: coro_pop rendezvous") {
+  exec::static_thread_pool pool(1);
+  exec::async_scope scope;
+  buffer_queue<int> q(0);
+
+  scope.spawn(on(pool.get_scheduler(), coro_pop(q)));
+
+  q.push(1);
+  q.push(2);
+  q.push(3);
+  q.push(4);
+
+  stdexec::sync_wait(scope.on_empty());
+}
+#endif

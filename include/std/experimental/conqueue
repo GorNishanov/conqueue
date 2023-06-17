@@ -104,6 +104,7 @@ public:
 
   // observers
   bool is_closed() noexcept { return closed; }
+  size_t capacity() const noexcept { return queue.capacity(); }
 
   // modifiers
   void close() noexcept;
