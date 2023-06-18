@@ -368,6 +368,8 @@ buffer_queue<T, Alloc>::locked_consume(unique_lock<lock_t>& lock,
                                        error_code& ec) {
   // The queue capacity is zero and there are waiting pushers.
   // Consume directly from the pusher.
+  assert(queue.capacity() == 0);
+
   ec = {};
   std::optional<T> result;
 
@@ -417,7 +419,7 @@ optional<T> buffer_queue<T, Alloc>::pop_impl(error_code& ec,
       return nullopt;
     }
 
-    if (queue.capacity() == 0 && !push_waiters.empty())
+    if (!push_waiters.empty())
       return locked_consume(lock, ec);
 
     if (error_on_empty) {
