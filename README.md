@@ -29,12 +29,10 @@ public:
   // modifiers
   void close() noexcept;
 
-  pop_sender async_pop() noexcept;
   T pop();
   std::optional<T> pop(std::error_code& ec);
   std::optional<T> try_pop(std::error_code& ec);
 
-  push_sender async_push(T x) noexcept(is_nothrow_move_constructible_v<T>);
   void push(const T& x);
   bool push(const T& x, error_code& ec); // used to be wait_push
   bool try_push(const T& x, error_code& ec);
@@ -42,5 +40,10 @@ public:
   void push(T&& x);
   bool push(T&& x, error_code& ec); // used to be wait_push
   bool try_push(T&& x, error_code& ec);
+
+  // async modifiers
+  push_sender async_push(const T& x) noexcept(is_nothrow_copy_constructible_v<T>);
+  push_sender async_push(T&& x) noexcept(is_nothrow_move_constructible_v<T>);
+  pop_sender async_pop() noexcept;
 };
 ```

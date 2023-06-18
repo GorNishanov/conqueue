@@ -89,7 +89,17 @@ template <typename T, typename Alloc = std::allocator<T>> class buffer_queue {
 
   struct blocking_waiter;
 
+  void
+  locked_drain_waiters(unique_lock<lock_t>& lock,
+                       __detail::intrusive_list<&waiter_base::prev,
+                                                &waiter_base::next>& waiters);
+
   std::optional<T> locked_pop(unique_lock<lock_t>& lock, error_code& ec);
+  std::optional<T> locked_consume(unique_lock<lock_t>& lock, error_code& ec);
+  std::optional<T> pop_impl(error_code& ec, bool error_on_empty = false);
+
+  template <typename U>
+  bool try_release_pop_waiter(unique_lock<lock_t>& lock, U&& value);
 
   template <typename U>
   bool locked_push(unique_lock<lock_t>& lock, U&& value, error_code& ec);
@@ -130,9 +140,8 @@ public:
 private:
   lock_t mutex;
   __detail::ring_buffer<T, Alloc> queue;
-  // If the queue is empty, waiters are the readers.
-  // If the queue is full, waiters are the writers.
-  __detail::intrusive_list<&waiter_base::prev, &waiter_base::next> waiters;
+  __detail::intrusive_list<&waiter_base::prev, &waiter_base::next> pop_waiters;
+  __detail::intrusive_list<&waiter_base::prev, &waiter_base::next> push_waiters;
   bool closed{};
 };
 
@@ -148,11 +157,9 @@ buffer_queue<T, Alloc>::~buffer_queue() noexcept {
 }
 
 template <typename T, typename Alloc>
-void buffer_queue<T, Alloc>::close() noexcept {
-  std::unique_lock lock(mutex);
-  if (closed)
-    return;
-  closed = true;
+void buffer_queue<T, Alloc>::locked_drain_waiters(
+    unique_lock<lock_t>& lock,
+    __detail::intrusive_list<&waiter_base::prev, &waiter_base::next>& waiters) {
   while (!waiters.empty()) {
     auto* waiter = waiters.pop_front();
     waiter->value = conqueue_errc::closed;
@@ -163,6 +170,31 @@ void buffer_queue<T, Alloc>::close() noexcept {
 }
 
 template <typename T, typename Alloc>
+void buffer_queue<T, Alloc>::close() noexcept {
+  std::unique_lock lock(mutex);
+  if (closed)
+    return;
+  closed = true;
+  locked_drain_waiters(lock, pop_waiters);
+  locked_drain_waiters(lock, push_waiters);
+}
+
+template <typename T, typename Alloc>
+template <typename U>
+bool buffer_queue<T, Alloc>::try_release_pop_waiter(unique_lock<lock_t>& lock,
+                                                    U&& value) {
+  if (pop_waiters.empty())
+    return false;
+
+  auto* waiter =
+      pop_waiters.pop_front(); // TODO: put directly into the popper storage.
+  waiter->value = std::forward<U>(value);
+  lock.unlock();
+  waiter->complete(waiter);
+  return true;
+}
+
+template <typename T, typename Alloc>
 template <typename U>
 bool buffer_queue<T, Alloc>::locked_push(unique_lock<lock_t>& lock, U&& value,
                                          error_code& ec) {
@@ -170,13 +202,8 @@ bool buffer_queue<T, Alloc>::locked_push(unique_lock<lock_t>& lock, U&& value,
   ec = {};
 
   // See if there are any waiters, if so, pass the value directly to them.
-  if (!waiters.empty()) {
-    auto* waiter = waiters.pop_front();
-    waiter->value = std::forward<U>(value);
-    lock.unlock();
-    waiter->complete(waiter);
+  if (try_release_pop_waiter(lock, std::forward<U>(value)))
     return true;
-  }
 
   queue.push_back(std::forward<U>(value));
   return true;
@@ -198,10 +225,14 @@ bool buffer_queue<T, Alloc>::push_impl(U&& x, error_code& ec,
       return false;
     }
 
+    // Rendezvous with a pop operation if we have zero capacity.
+    if (capacity() == 0 && try_release_pop_waiter(lock, std::forward<U>(x)))
+      return true;
+
     blocking_waiter waiter(std::forward<U>(x));
     STDEX_CONQUEUE_LOG("push: queue is full, putting %p in the waiters queue\n",
                        &waiter);
-    waiters.push_back(&waiter);
+    push_waiters.push_back(&waiter);
     lock.unlock();
     waiter.wait();
     STDEX_CONQUEUE_LOG("push: was resumed %p\n", &waiter);
@@ -316,12 +347,14 @@ struct buffer_queue<T, Alloc>::push_sender {
         STDEX_CONQUEUE_LOG(
             "async_push: queue is full, putting %p in the waiters queue\n",
             &op);
-        self.waiters.push_back(&op);
+        self.push_waiters.push_back(&op);
         return;
       }
-      // See if there are any waiters, if so, pass the value directly to them.
-      if (!self.waiters.empty()) {
-        auto* waiter = self.waiters.pop_front();
+      // See if there are any waiters, if so, pass the value directly to
+      // them.
+      if (!self.pop_waiters.empty()) {
+        auto* waiter = self.pop_waiters.pop_front();
+        // TODO: Put directly into popper storage.
         waiter->value = std::move(std::get<T>(op.value));
         lock.unlock();
         STDEX_CONQUEUE_LOG("async push: unlocking reader %p\n", waiter);
@@ -355,17 +388,36 @@ typename buffer_queue<T, Alloc>::push_sender buffer_queue<T, Alloc>::async_push(
 }
 
 template <typename T, typename Alloc>
+std::optional<T>
+buffer_queue<T, Alloc>::locked_consume(unique_lock<lock_t>& lock,
+                                       error_code& ec) {
+  // The queue capacity is zero and there are waiting pushers.
+  // Consume directly from the pusher.
+  ec = {};
+  std::optional<T> result;
+
+  // Release a single pusher and take its value.
+  auto* waiter = push_waiters.pop_front();
+  if (auto* lval = waiter->try_get_lvalue())
+    result = std::move(*lval);
+  else
+    result = waiter->get_rvalue();
+  lock.unlock();
+  STDEX_CONQUEUE_LOG("unlocking pusher %p\n", waiter);
+  waiter->complete(waiter);
+
+  return result;
+}
+
+template <typename T, typename Alloc>
 optional<T> buffer_queue<T, Alloc>::locked_pop(unique_lock<lock_t>& lock,
                                                error_code& ec) {
   // The caller already verified that the queue is not empty.
   ec = {};
   T result = queue.pop_front();
-
-  // See if there are any waiters that can be resumed now.
-  if (!waiters.empty()) {
-    // During pop, waiters are the pushers blocked because the queue is full.
+  if (!push_waiters.empty()) {
     // Release a single pusher and put its value into the queue.
-    auto* waiter = waiters.pop_front();
+    auto* waiter = push_waiters.pop_front();
     if (auto* lval = waiter->try_get_lvalue())
       queue.push_back(std::move(*lval));
     else
@@ -373,26 +425,13 @@ optional<T> buffer_queue<T, Alloc>::locked_pop(unique_lock<lock_t>& lock,
     lock.unlock();
     STDEX_CONQUEUE_LOG("unlocking pusher %p\n", waiter);
     waiter->complete(waiter);
-    return result;
   }
   return result;
 }
 
 template <typename T, typename Alloc>
-optional<T> buffer_queue<T, Alloc>::try_pop(std::error_code& ec) {
-  std::unique_lock lock(mutex);
-
-  // If the queue is empty, wait for a value to be pushed.
-  if (queue.empty()) {
-    ec = closed ? conqueue_errc::closed : conqueue_errc::empty;
-    return nullopt;
-  }
-
-  return locked_pop(lock, ec);
-}
-
-template <typename T, typename Alloc>
-optional<T> buffer_queue<T, Alloc>::pop(error_code& ec) {
+optional<T> buffer_queue<T, Alloc>::pop_impl(error_code& ec,
+                                             bool error_on_empty) {
   std::unique_lock lock(mutex);
 
   // If the queue is empty, wait for a value to be pushed.
@@ -402,10 +441,19 @@ optional<T> buffer_queue<T, Alloc>::pop(error_code& ec) {
       ec = conqueue_errc::closed;
       return nullopt;
     }
+
+    if (queue.capacity() == 0 && !push_waiters.empty())
+      return locked_consume(lock, ec);
+
+    if (error_on_empty) {
+      ec = conqueue_errc::empty;
+      return nullopt;
+    }
+
     blocking_waiter waiter;
     STDEX_CONQUEUE_LOG("pop: queue is empty, putting %p in the waiters queue\n",
                        &waiter);
-    waiters.push_back(&waiter);
+    pop_waiters.push_back(&waiter);
     lock.unlock();
     waiter.wait();
     STDEX_CONQUEUE_LOG("pop: %p was just resumed\n", &waiter);
@@ -413,6 +461,8 @@ optional<T> buffer_queue<T, Alloc>::pop(error_code& ec) {
       ec = *errc;
       return nullopt;
     }
+    // TODO: resumer should have put all the right data for us.
+    // All the code below should become return result;
     ec = {};
     if (auto* lval = waiter.try_get_lvalue())
       return std::move(*lval);
@@ -423,9 +473,19 @@ optional<T> buffer_queue<T, Alloc>::pop(error_code& ec) {
   return locked_pop(lock, ec);
 }
 
+template <typename T, typename Alloc>
+optional<T> buffer_queue<T, Alloc>::try_pop(std::error_code& ec) {
+  return pop_impl(ec, true);
+}
+
+template <typename T, typename Alloc>
+optional<T> buffer_queue<T, Alloc>::pop(error_code& ec) {
+  return pop_impl(ec);
+}
+
 template <typename T, typename Alloc> T buffer_queue<T, Alloc>::pop() {
   std::error_code ec;
-  if (auto result = pop(ec))
+  if (auto result = pop_impl(ec))
     return *result;
 
   throw conqueue_error(ec);
@@ -490,17 +550,16 @@ struct buffer_queue<T, Alloc>::pop_sender {
         STDEX_CONQUEUE_LOG(
             "async_pop: queue is empty, putting %p in the waiters queue\n",
             &op);
-        self.waiters.push_back(&op);
+        self.pop_waiters.push_back(&op);
         return;
       }
 
       T value = self.queue.pop_front();
 
-      // See if there are any waiters
-      if (!self.waiters.empty()) {
-        // During pop, waiters are the pushers blocked because the queue is
-        // full. Release a single pusher and put its value into the queue.
-        auto* waiter = self.waiters.pop_front();
+      // See if there are any push waiters we can unblock.
+      if (!self.push_waiters.empty()) {
+        // Release a single pusher and put its value into the queue.
+        auto* waiter = self.push_waiters.pop_front();
         if (auto* lval = waiter->try_get_lvalue())
           self.queue.push_back(std::move(*lval));
         else
