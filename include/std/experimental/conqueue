@@ -99,12 +99,6 @@ template <typename T, typename Alloc = std::allocator<T>> class buffer_queue {
   std::optional<T> pop_impl(error_code& ec, bool error_on_empty = false);
 
   template <typename U>
-  bool try_release_pop_waiter(unique_lock<lock_t>& lock, U&& value);
-
-  template <typename U>
-  bool locked_push(unique_lock<lock_t>& lock, U&& value, error_code& ec);
-
-  template <typename U>
   bool push_impl(U&& x, error_code& ec, bool error_on_full = false);
 
 public:
@@ -181,36 +175,6 @@ void buffer_queue<T, Alloc>::close() noexcept {
 
 template <typename T, typename Alloc>
 template <typename U>
-bool buffer_queue<T, Alloc>::try_release_pop_waiter(unique_lock<lock_t>& lock,
-                                                    U&& value) {
-  if (pop_waiters.empty())
-    return false;
-
-  auto* waiter =
-      pop_waiters.pop_front(); // TODO: put directly into the popper storage.
-  waiter->value = std::forward<U>(value);
-  lock.unlock();
-  waiter->complete(waiter);
-  return true;
-}
-
-template <typename T, typename Alloc>
-template <typename U>
-bool buffer_queue<T, Alloc>::locked_push(unique_lock<lock_t>& lock, U&& value,
-                                         error_code& ec) {
-  // The caller acquired the lock and verified that the queue is not full.
-  ec = {};
-
-  // See if there are any waiters, if so, pass the value directly to them.
-  if (try_release_pop_waiter(lock, std::forward<U>(value)))
-    return true;
-
-  queue.push_back(std::forward<U>(value));
-  return true;
-}
-
-template <typename T, typename Alloc>
-template <typename U>
 bool buffer_queue<T, Alloc>::push_impl(U&& x, error_code& ec,
                                        bool error_on_full) {
   std::unique_lock lock(mutex);
@@ -219,15 +183,22 @@ bool buffer_queue<T, Alloc>::push_impl(U&& x, error_code& ec,
     return false;
   }
 
+  // Rendezvous with a pop operation if there are any.
+  if (!pop_waiters.empty()) {
+    // TODO: put directly into the popper storage.
+    auto* waiter = pop_waiters.pop_front();
+    waiter->value = std::forward<U>(x);
+    lock.unlock();
+    waiter->complete(waiter);
+    ec = {};
+    return true;
+  }
+
   if (queue.full()) {
     if (error_on_full) {
       ec = conqueue_errc::full;
       return false;
     }
-
-    // Rendezvous with a pop operation if we have zero capacity.
-    if (try_release_pop_waiter(lock, std::forward<U>(x)))
-      return true;
 
     blocking_waiter waiter(std::forward<U>(x));
     STDEX_CONQUEUE_LOG("push: queue is full, putting %p in the waiters queue\n",
@@ -245,7 +216,9 @@ bool buffer_queue<T, Alloc>::push_impl(U&& x, error_code& ec,
     return true;
   }
 
-  return locked_push(lock, std::forward<U>(x), ec);
+  ec = {};
+  queue.push_back(std::forward<U>(x));
+  return true;
 }
 
 template <typename T, typename Alloc>
