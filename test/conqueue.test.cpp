@@ -82,9 +82,9 @@ TEST_CASE("conqueue: blocking pull then closed") {
   t.join();
 }
 
-exec::task<void> coro_push(buffer_queue<int>& q) {
-  co_await q.async_push(3);
-  co_await q.async_push(4);
+exec::task<void> coro_push(buffer_queue<int>& q, int from = 3, int to = 4) {
+  for (; from <= to; ++from)
+    co_await q.async_push(from);
 }
 
 TEST_CASE("conqueue: coro_push") {
@@ -137,6 +137,21 @@ TEST_CASE("conqueue: coro_pop rendezvous") {
   q.push(2);
   q.push(3);
   q.push(4);
+
+  stdexec::sync_wait(scope.on_empty());
+}
+
+TEST_CASE("conqueue: coro_push rendezvous") {
+  exec::static_thread_pool pool(1);
+  exec::async_scope scope;
+  buffer_queue<int> q(0);
+
+  scope.spawn(on(pool.get_scheduler(), coro_push(q, 1, 4)));
+
+  REQUIRE(q.pop() == 1);
+  REQUIRE(q.pop() == 2);
+  REQUIRE(q.pop() == 3);
+  REQUIRE(q.pop() == 4);
 
   stdexec::sync_wait(scope.on_empty());
 }
