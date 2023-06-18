@@ -243,14 +243,14 @@ bool buffer_queue<T, Alloc>::push(const T& x, error_code& ec) {
 
 template <typename T, typename Alloc> void buffer_queue<T, Alloc>::push(T&& x) {
   error_code ec;
-  if (!push(std::move(x), ec))
+  if (!push_impl(std::move(x), ec))
     throw conqueue_error(ec);
 }
 
 template <typename T, typename Alloc>
 void buffer_queue<T, Alloc>::push(const T& x) {
   error_code ec;
-  if (!push(x, ec))
+  if (!push_impl(x, ec))
     throw conqueue_error(ec);
 }
 
