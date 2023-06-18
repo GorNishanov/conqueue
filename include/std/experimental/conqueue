@@ -65,6 +65,8 @@ template <typename T, typename Alloc = std::allocator<T>> class buffer_queue {
   struct pop_waiter {
     optional<T>& result;
     error_code& ec;
+    pop_waiter(optional<T>& result, error_code& ec) : result(result), ec(ec) {}
+
     void (*complete)(pop_waiter*) = {};
     pop_waiter* prev{};
     pop_waiter* next{};
@@ -72,6 +74,8 @@ template <typename T, typename Alloc = std::allocator<T>> class buffer_queue {
 
   struct push_waiter {
     error_code& ec;
+    explicit push_waiter(error_code& ec) : ec(ec) {}
+
     void (*complete)(push_waiter*) = {};
     T* lval{};
     const T* rval{};
