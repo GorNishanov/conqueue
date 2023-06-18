@@ -523,13 +523,18 @@ struct buffer_queue<T, Alloc>::pop_sender {
         : queue(queue), receiver(std::move(receiver)) {
       this->complete = [](waiter_base* w) noexcept {
         auto* self = static_cast<operation*>(w);
-        if (auto* errc = get_if<conqueue_errc>(&self->value))
+        if (auto* errc = get_if<conqueue_errc>(&self->value)) {
+          STDEX_CONQUEUE_LOG("async_pop: resumed with error: %d\n", *errc);
           stdexec::set_error((Receiver&&)self->receiver,
                              make_exception_ptr(conqueue_error(*errc)));
-        else if (auto* lval = self->try_get_lvalue())
+        } else if (auto* lval = self->try_get_lvalue()) {
+          STDEX_CONQUEUE_LOG("async_pop: resumed with lvalue: %d\n", *lval);
           stdexec::set_value((Receiver&&)self->receiver, std::move(*lval));
-        else
+        } else {
+          STDEX_CONQUEUE_LOG("async_pop: resumed with rvalue: %d\n",
+                             self->get_rvalue());
           stdexec::set_value((Receiver&&)self->receiver, self->get_rvalue());
+        }
       };
     }
 
