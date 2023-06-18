@@ -15,7 +15,9 @@ add_subdirectory(dependencies)
 add_compile_options(-Werror)
 
 # Define the main library
-add_library(conqueue STATIC src/conqueue.cpp)
+add_library(conqueue STATIC 
+  src/conqueue.cpp src/system_context.cpp
+  )
 
 # Declare the public include directories
 include(GNUInstallDirs)

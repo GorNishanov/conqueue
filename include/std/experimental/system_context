@@ -1,0 +1,49 @@
+// Copyright (c) 2023 Gor Nishanov
+// Licensed under MIT license. See LICENSE.txt for details.
+
+#ifndef _STD_EXPERIMENTAL_SYSTEM_CONTEXT
+#define _STD_EXPERIMENTAL_SYSTEM_CONTEXT
+
+#include <stdexec/execution.hpp>
+
+namespace {
+class system_context {
+public:
+  system_context();
+  ~system_context();
+
+  system_context(const system_context&) = delete;
+  system_context(system_context&&) = delete;
+  system_context& operator=(const system_context&) = delete;
+  system_context& operator=(system_context&&) = delete;
+
+  class scheduler;
+  scheduler get_scheduler();
+  // size_t max_concurrency() const noexcept;
+};
+
+class system_context::scheduler {
+public:
+  scheduler() = delete;
+  ~scheduler();
+
+  scheduler(const scheduler&);
+  scheduler(scheduler&&);
+  scheduler& operator=(const scheduler&);
+  scheduler& operator=(scheduler&&);
+
+  bool operator==(const scheduler&) const noexcept;
+
+  class sender;
+  friend sender tag_invoke(stdexec::schedule_t, const scheduler&) noexcept;
+  friend stdexec::forward_progress_guarantee
+  tag_invoke(stdexec::get_forward_progress_guarantee_t,
+             const scheduler&) noexcept;
+  class bulk_sender;
+  template <typename Sh, typename F>
+  friend bulk_sender tag_invoke(stdexec::bulk_t, const scheduler&, Sh&& sh,
+                                F&& f) noexcept;
+};
+} // namespace
+
+#endif // _STD_EXPERIMENTAL_SYSTEM_CONTEXT
