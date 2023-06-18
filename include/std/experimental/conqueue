@@ -10,9 +10,7 @@
 #include <exception>
 #include <mutex>
 #include <optional>
-#include <stdio.h>
 #include <system_error>
-#include <variant>
 
 #include <std/experimental/__detail/intrusive_list.hpp>
 #include <std/experimental/__detail/ring_buffer.hpp>
@@ -64,35 +62,28 @@ template <typename T, typename Alloc = std::allocator<T>> class buffer_queue {
   struct pop_sender;
   struct push_sender;
 
-  struct waiter_base {
-    waiter_base *prev{}, *next{};
-    // For push case, we store the pointer to the value to be pushed. (if we are
-    // blocked on push) Or the value itself, if we are unblocking the popper.
-    // For pop case, we store monostate.
-    variant<monostate, conqueue_errc, T, T*, const T*> value;
-    void (*complete)(waiter_base*) noexcept;
-
-    T* try_get_lvalue() noexcept {
-      if (auto* ptr = get_if<T>(&value))
-        return ptr;
-      if (auto* ptr = get_if<T*>(&value))
-        return *ptr;
-      return nullptr;
-    }
-
-    const T& get_rvalue() { return *std::get<const T*>(value); }
-
-    ~waiter_base() noexcept {
-      STDEX_CONQUEUE_LOG("waiter_base: destroying %p\n", this);
-    }
+  struct pop_waiter {
+    optional<T>& result;
+    error_code& ec;
+    void (*complete)(pop_waiter*) = {};
+    pop_waiter* prev{};
+    pop_waiter* next{};
   };
 
-  struct blocking_waiter;
+  struct push_waiter {
+    error_code& ec;
+    void (*complete)(push_waiter*) = {};
+    T* lval{};
+    const T* rval{};
+    push_waiter* prev{};
+    push_waiter* next{};
+  };
 
-  void
-  locked_drain_waiters(unique_lock<lock_t>& lock,
-                       __detail::intrusive_list<&waiter_base::prev,
-                                                &waiter_base::next>& waiters);
+  struct sync_pop_waiter;
+  struct sync_push_waiter;
+
+  template <typename IntrusiveList>
+  void locked_drain_waiters(unique_lock<lock_t>& lock, IntrusiveList& waiters);
 
   std::optional<T> locked_pop(unique_lock<lock_t>& lock, error_code& ec);
   std::optional<T> locked_consume(unique_lock<lock_t>& lock, error_code& ec);
@@ -134,8 +125,8 @@ public:
 private:
   lock_t mutex;
   __detail::ring_buffer<T, Alloc> queue;
-  __detail::intrusive_list<&waiter_base::prev, &waiter_base::next> pop_waiters;
-  __detail::intrusive_list<&waiter_base::prev, &waiter_base::next> push_waiters;
+  __detail::intrusive_list<&pop_waiter::prev, &pop_waiter::next> pop_waiters;
+  __detail::intrusive_list<&push_waiter::prev, &push_waiter::next> push_waiters;
   bool closed{};
 };
 
@@ -151,12 +142,12 @@ buffer_queue<T, Alloc>::~buffer_queue() noexcept {
 }
 
 template <typename T, typename Alloc>
-void buffer_queue<T, Alloc>::locked_drain_waiters(
-    unique_lock<lock_t>& lock,
-    __detail::intrusive_list<&waiter_base::prev, &waiter_base::next>& waiters) {
+template <typename IntrusiveList>
+void buffer_queue<T, Alloc>::locked_drain_waiters(unique_lock<lock_t>& lock,
+                                                  IntrusiveList& waiters) {
   while (!waiters.empty()) {
     auto* waiter = waiters.pop_front();
-    waiter->value = conqueue_errc::closed;
+    waiter->ec = conqueue_errc::closed;
     lock.unlock();
     waiter->complete(waiter);
     lock.lock();
@@ -185,9 +176,9 @@ bool buffer_queue<T, Alloc>::push_impl(U&& x, error_code& ec,
 
   // Rendezvous with a pop operation if there are any.
   if (!pop_waiters.empty()) {
-    // TODO: put directly into the popper storage.
     auto* waiter = pop_waiters.pop_front();
-    waiter->value = std::forward<U>(x);
+    waiter->result = std::forward<U>(x);
+    waiter->ec = {};
     lock.unlock();
     waiter->complete(waiter);
     ec = {};
@@ -200,20 +191,14 @@ bool buffer_queue<T, Alloc>::push_impl(U&& x, error_code& ec,
       return false;
     }
 
-    blocking_waiter waiter(std::forward<U>(x));
+    sync_push_waiter waiter(std::forward<U>(x), ec);
     STDEX_CONQUEUE_LOG("push: queue is full, putting %p in the waiters queue\n",
                        &waiter);
     push_waiters.push_back(&waiter);
     lock.unlock();
     waiter.wait();
     STDEX_CONQUEUE_LOG("push: was resumed %p\n", &waiter);
-    // Queue got closed while we were waiting.
-    if (auto* errc = get_if<conqueue_errc>(&waiter.value)) {
-      ec = *errc;
-      return false;
-    }
-    ec = {};
-    return true;
+    return !ec;
   }
 
   ec = {};
@@ -255,24 +240,41 @@ void buffer_queue<T, Alloc>::push(const T& x) {
 }
 
 template <typename T, typename Alloc>
-struct buffer_queue<T, Alloc>::blocking_waiter : waiter_base {
+struct buffer_queue<T, Alloc>::sync_push_waiter : push_waiter {
   std::atomic_flag flag;
 
-  blocking_waiter() noexcept {
-    this->complete = [](waiter_base* w) noexcept {
-      auto* self = static_cast<blocking_waiter*>(w);
-      STDEX_CONQUEUE_LOG("notifying sync waiter %p\n", w);
+  sync_push_waiter(error_code& ec) noexcept : push_waiter(ec) {
+    this->complete = [](push_waiter* w) noexcept {
+      auto* self = static_cast<sync_push_waiter*>(w);
+      STDEX_CONQUEUE_LOG("notifying sync push waiter %p\n", w);
       self->flag.test_and_set();
       self->flag.notify_one();
     };
   }
 
-  blocking_waiter(T&& x) noexcept : blocking_waiter() {
-    this->value = std::addressof(x);
+  sync_push_waiter(T&& x, error_code& ec) noexcept : sync_push_waiter(ec) {
+    this->lval = std::addressof(x);
   }
 
-  blocking_waiter(const T& x) noexcept : blocking_waiter() {
-    this->value = std::addressof(x);
+  sync_push_waiter(const T& x, error_code& ec) noexcept : sync_push_waiter(ec) {
+    this->rval = std::addressof(x);
+  }
+
+  void wait() noexcept { flag.wait(false); }
+};
+
+template <typename T, typename Alloc>
+struct buffer_queue<T, Alloc>::sync_pop_waiter : pop_waiter {
+  std::atomic_flag flag;
+
+  sync_pop_waiter(optional<T>& value, error_code& ec) noexcept
+      : pop_waiter(value, ec) {
+    this->complete = [](pop_waiter* w) noexcept {
+      auto* self = static_cast<sync_pop_waiter*>(w);
+      STDEX_CONQUEUE_LOG("notifying sync push waiter %p\n", w);
+      self->flag.test_and_set();
+      self->flag.notify_one();
+    };
   }
 
   void wait() noexcept { flag.wait(false); }
@@ -289,20 +291,23 @@ struct buffer_queue<T, Alloc>::push_sender {
                                      stdexec::set_error_t(std::exception_ptr),
                                      stdexec::set_stopped_t()>;
 
-  template <typename Receiver> struct operation : waiter_base {
+  template <typename Receiver> struct operation : push_waiter {
     buffer_queue& queue;
     Receiver receiver;
+    T value;
+    std::error_code ec;
 
     operation(push_sender&& sender, Receiver&& receiver)
-        : queue(sender.queue), receiver(std::move(receiver)) {
-      this->value = std::move(sender.value);
-      this->complete = [](waiter_base* w) noexcept {
-        auto* self = static_cast<operation*>(w);
-        if (auto* errc = get_if<conqueue_errc>(&self->value))
-          stdexec::set_error((Receiver&&)self->receiver,
-                             make_exception_ptr(conqueue_error(*errc)));
+        : push_waiter(ec), queue(sender.queue), receiver(std::move(receiver)),
+          value(std::move(sender.value)) {
+      this->lval = std::addressof(value);
+      this->complete = [](push_waiter* w) noexcept {
+        auto& op = *static_cast<operation*>(w);
+        if (op.ec)
+          stdexec::set_error((Receiver&&)op.receiver,
+                             make_exception_ptr(conqueue_error(op.ec)));
         else
-          stdexec::set_value((Receiver&&)self->receiver);
+          stdexec::set_value((Receiver&&)op.receiver);
       };
     }
 
@@ -321,8 +326,8 @@ struct buffer_queue<T, Alloc>::push_sender {
       // them.
       if (!self.pop_waiters.empty()) {
         auto* waiter = self.pop_waiters.pop_front();
-        // TODO: Put directly into popper storage.
-        waiter->value = std::move(std::get<T>(op.value));
+        waiter->result = std::move(op.value);
+        waiter->ec = {};
         lock.unlock();
         STDEX_CONQUEUE_LOG("async push: unlocking reader %p\n", waiter);
         waiter->complete(waiter);
@@ -336,8 +341,8 @@ struct buffer_queue<T, Alloc>::push_sender {
         }
 
         STDEX_CONQUEUE_LOG("async push: queue is not full, pushing value %d\n",
-                           std::get<T>(op.value));
-        self.queue.push_back(std::move(std::get<T>(op.value)));
+                           op.value);
+        self.queue.push_back(std::move(op.value));
       }
       stdexec::set_value((Receiver&&)op.receiver);
     }
@@ -375,10 +380,10 @@ buffer_queue<T, Alloc>::locked_consume(unique_lock<lock_t>& lock,
 
   // Release a single pusher and take its value.
   auto* waiter = push_waiters.pop_front();
-  if (auto* lval = waiter->try_get_lvalue())
+  if (auto* lval = waiter->lval)
     result = std::move(*lval);
   else
-    result = waiter->get_rvalue();
+    result = *waiter->rval;
   lock.unlock();
   STDEX_CONQUEUE_LOG("unlocking pusher %p\n", waiter);
   waiter->complete(waiter);
@@ -395,10 +400,10 @@ optional<T> buffer_queue<T, Alloc>::locked_pop(unique_lock<lock_t>& lock,
   if (!push_waiters.empty()) {
     // Release a single pusher and put its value into the queue.
     auto* waiter = push_waiters.pop_front();
-    if (auto* lval = waiter->try_get_lvalue())
+    if (auto* lval = waiter->lval)
       queue.push_back(std::move(*lval));
     else
-      queue.push_back(waiter->get_rvalue());
+      queue.push_back(*waiter->rval);
     lock.unlock();
     STDEX_CONQUEUE_LOG("unlocking pusher %p\n", waiter);
     waiter->complete(waiter);
@@ -427,24 +432,15 @@ optional<T> buffer_queue<T, Alloc>::pop_impl(error_code& ec,
       return nullopt;
     }
 
-    blocking_waiter waiter;
+    std::optional<T> result;
+    sync_pop_waiter waiter(result, ec);
     STDEX_CONQUEUE_LOG("pop: queue is empty, putting %p in the waiters queue\n",
                        &waiter);
     pop_waiters.push_back(&waiter);
     lock.unlock();
     waiter.wait();
     STDEX_CONQUEUE_LOG("pop: %p was just resumed\n", &waiter);
-    if (auto* errc = get_if<conqueue_errc>(&waiter.value)) {
-      ec = *errc;
-      return nullopt;
-    }
-    // TODO: resumer should have put all the right data for us.
-    // All the code below should become return result;
-    ec = {};
-    if (auto* lval = waiter.try_get_lvalue())
-      return std::move(*lval);
-    else
-      return waiter.get_rvalue();
+    return result;
   }
 
   return locked_pop(lock, ec);
@@ -478,9 +474,11 @@ struct buffer_queue<T, Alloc>::pop_sender {
                                      stdexec::set_error_t(std::exception_ptr),
                                      stdexec::set_stopped_t()>;
 
-  template <typename Receiver> struct operation : waiter_base {
+  template <typename Receiver> struct operation : pop_waiter {
     buffer_queue& queue;
     Receiver receiver;
+    std::optional<T> result;
+    std::error_code ec;
 
     struct cancel_callback {
       operation& self;
@@ -497,20 +495,18 @@ struct buffer_queue<T, Alloc>::pop_sender {
     };
 
     operation(buffer_queue& queue, Receiver&& receiver)
-        : queue(queue), receiver(std::move(receiver)) {
-      this->complete = [](waiter_base* w) noexcept {
-        auto* self = static_cast<operation*>(w);
-        if (auto* errc = get_if<conqueue_errc>(&self->value)) {
-          STDEX_CONQUEUE_LOG("async_pop: resumed with error: %d\n", *errc);
-          stdexec::set_error((Receiver&&)self->receiver,
-                             make_exception_ptr(conqueue_error(*errc)));
-        } else if (auto* lval = self->try_get_lvalue()) {
-          STDEX_CONQUEUE_LOG("async_pop: resumed with lvalue: %d\n", *lval);
-          stdexec::set_value((Receiver&&)self->receiver, std::move(*lval));
+        : pop_waiter(result, ec), queue(queue), receiver(std::move(receiver)) {
+      this->complete = [](pop_waiter* w) noexcept {
+        auto& op = *static_cast<operation*>(w);
+        if (op.result) {
+          STDEX_CONQUEUE_LOG("async_pop: resumed with lvalue: %d\n",
+                             *op.result);
+          stdexec::set_value((Receiver&&)op.receiver, std::move(*op.result));
         } else {
-          STDEX_CONQUEUE_LOG("async_pop: resumed with rvalue: %d\n",
-                             self->get_rvalue());
-          stdexec::set_value((Receiver&&)self->receiver, self->get_rvalue());
+          STDEX_CONQUEUE_LOG("async_pop: resumed with error: %d\n",
+                             op.ec.value());
+          stdexec::set_error((Receiver&&)op.receiver,
+                             make_exception_ptr(conqueue_error(op.ec)));
         }
       };
     }
@@ -534,7 +530,7 @@ struct buffer_queue<T, Alloc>::pop_sender {
           assert(self.capacity() == 0);
           auto* waiter = self.push_waiters.pop_front();
           lock.unlock();
-          if (auto* lval = waiter->try_get_lvalue()) {
+          if (auto* lval = waiter->lval) {
             STDEX_CONQUEUE_LOG(
                 "async_pop: consuming directly from waiter %p. lvalue %d\n",
                 waiter, *lval);
@@ -542,8 +538,8 @@ struct buffer_queue<T, Alloc>::pop_sender {
           } else {
             STDEX_CONQUEUE_LOG(
                 "async_pop: consuming directly from waiter %p. rvalue %d\n",
-                waiter, waiter->get_rvalue());
-            stdexec::set_value((Receiver&&)op.receiver, waiter->get_rvalue());
+                waiter, *waiter->rval);
+            stdexec::set_value((Receiver&&)op.receiver, *waiter->rval);
           }
           STDEX_CONQUEUE_LOG("unlocking pusher %p\n", waiter);
           waiter->complete(waiter);
@@ -563,10 +559,10 @@ struct buffer_queue<T, Alloc>::pop_sender {
       if (!self.push_waiters.empty()) {
         // Release a single pusher and put its value into the queue.
         auto* waiter = self.push_waiters.pop_front();
-        if (auto* lval = waiter->try_get_lvalue())
+        if (auto* lval = waiter->lval)
           self.queue.push_back(std::move(*lval));
         else
-          self.queue.push_back(waiter->get_rvalue());
+          self.queue.push_back(*waiter->rval);
         lock.unlock();
         STDEX_CONQUEUE_LOG("async_pop: unlocking pusher %p\n", waiter);
         waiter->complete(waiter);
