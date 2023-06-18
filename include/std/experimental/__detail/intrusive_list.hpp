@@ -50,7 +50,7 @@ public:
   }
 
   // Remove an object from the front of the list and return it
-  [[nodiscard]] _Item* pop_front() {
+  [[nodiscard]] _Item* try_pop_front() {
     // Check if the list is empty
     if (!head_)
       return nullptr;
@@ -77,7 +77,7 @@ public:
   }
 
   // Remove an object from the back of the list and return it
-  [[nodiscard]] _Item* pop_back() {
+  [[nodiscard]] _Item* try_pop_back() {
     // Check if the list is empty
     if (!tail_)
       return nullptr;

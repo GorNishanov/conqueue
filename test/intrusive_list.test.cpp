@@ -152,19 +152,19 @@ TEST_CASE("push and pop_back last") {
   REQUIRE(list.back() == &c);
   test_invariant(list);
 
-  REQUIRE(list.pop_front() == &a);
+  REQUIRE(list.try_pop_front() == &a);
   REQUIRE(list.front() == &b);
   REQUIRE(list.back() == &c);
   REQUIRE_FALSE(list.empty());
   test_invariant(list);
 
-  REQUIRE(list.pop_back() == &c);
+  REQUIRE(list.try_pop_back() == &c);
   REQUIRE(list.front() == &b);
   REQUIRE(list.back() == &b);
   REQUIRE_FALSE(list.empty());
   test_invariant(list);
 
-  REQUIRE(list.pop_back() == &b);
+  REQUIRE(list.try_pop_back() == &b);
   REQUIRE(list.empty());
   test_invariant(list);
 }
@@ -184,19 +184,19 @@ TEST_CASE("push and pop_front last") {
   REQUIRE(list.back() == &c);
   test_invariant(list);
 
-  REQUIRE(list.pop_front() == &a);
+  REQUIRE(list.try_pop_front() == &a);
   REQUIRE(list.front() == &b);
   REQUIRE(list.back() == &c);
   REQUIRE_FALSE(list.empty());
   test_invariant(list);
 
-  REQUIRE(list.pop_back() == &c);
+  REQUIRE(list.try_pop_back() == &c);
   REQUIRE(list.front() == &b);
   REQUIRE(list.back() == &b);
   REQUIRE_FALSE(list.empty());
   test_invariant(list);
 
-  REQUIRE(list.pop_front() == &b);
+  REQUIRE(list.try_pop_front() == &b);
   REQUIRE(list.empty());
   test_invariant(list);
 }
