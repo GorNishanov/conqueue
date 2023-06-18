@@ -529,8 +529,9 @@ struct buffer_queue<T, Alloc>::pop_sender {
           return;
         }
 
-        if (self.capacity() == 0 && !self.push_waiters.empty()) {
+        if (!self.push_waiters.empty()) {
           // Release a single pusher and take its value.
+          assert(self.capacity() == 0);
           auto* waiter = self.push_waiters.pop_front();
           lock.unlock();
           if (auto* lval = waiter->try_get_lvalue()) {
