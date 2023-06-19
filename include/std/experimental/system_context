@@ -145,9 +145,18 @@ public:
     template <typename Receiver> struct operation {
       Receiver receiver;
       chrono::nanoseconds ns;
+      dispatch_source_t timer;
 
       operation(Receiver&& receiver, chrono::nanoseconds ns)
-          : receiver(std::move(receiver)), ns(ns) {}
+          : receiver(std::move(receiver)), ns(ns),
+            timer(dispatch_source_create(
+                DISPATCH_SOURCE_TYPE_TIMER, 0, 0,
+                dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT,
+                                          0))) {
+        assert(timer);
+      }
+
+      ~operation() { dispatch_release(timer); }
 
       static void callback(void* context) noexcept {
         auto& op = *static_cast<operation*>(context);
@@ -166,12 +175,18 @@ public:
         }
       }
 
-      // TODO: Timer cancellation!!!
+      static void cancel_callback(void* context) noexcept {
+        auto& op = *static_cast<operation*>(context);
+        stdexec::set_stopped((Receiver&&)op.receiver);
+      }
+
       friend void tag_invoke(stdexec::start_t, operation& op) noexcept {
-        const auto when = dispatch_time(DISPATCH_TIME_NOW, op.ns.count());
-        dispatch_after_f(
-            when, dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0),
-            &op, &callback);
+        dispatch_set_context(op.timer, &op);
+        dispatch_source_set_event_handler_f(op.timer, &callback);
+        dispatch_source_set_cancel_handler_f(op.timer, &cancel_callback);
+        dispatch_source_set_timer(op.timer, DISPATCH_TIME_NOW, op.ns.count(),
+                                  0);
+        dispatch_resume(op.timer);
       }
     };
 
