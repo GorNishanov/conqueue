@@ -4,13 +4,16 @@
 #ifndef _STD_EXPERIMENTAL_SYSTEM_CONTEXT
 #define _STD_EXPERIMENTAL_SYSTEM_CONTEXT
 
+#include "stdexec/__detail/__execution_fwd.hpp"
+#include <dispatch/dispatch.h> // TODO: move it in platform specific code.
+#include <exception>
 #include <stdexec/execution.hpp>
 
 namespace {
 class system_context {
 public:
-  system_context();
-  ~system_context();
+  system_context() {}
+  ~system_context() = default;
 
   system_context(const system_context&) = delete;
   system_context(system_context&&) = delete;
@@ -23,27 +26,103 @@ public:
 };
 
 class system_context::scheduler {
+  system_context& ctx;
+  scheduler(system_context& ctx) : ctx(ctx) {}
+  friend system_context;
+
 public:
-  scheduler() = delete;
-  ~scheduler();
+  ~scheduler() = default;
 
-  scheduler(const scheduler&);
-  scheduler(scheduler&&);
-  scheduler& operator=(const scheduler&);
-  scheduler& operator=(scheduler&&);
+  scheduler(const scheduler& rhs) noexcept : ctx(rhs.ctx) {}
+  scheduler(scheduler&& rhs) noexcept : ctx(rhs.ctx) {}
+  scheduler& operator=(const scheduler&) = delete;
+  scheduler& operator=(scheduler&&) = delete;
 
-  bool operator==(const scheduler&) const noexcept;
+  bool operator==(const scheduler& rhs) const noexcept {
+    return &ctx == &rhs.ctx;
+  }
 
-  class sender;
-  friend sender tag_invoke(stdexec::schedule_t, const scheduler&) noexcept;
+  class sender {
+    system_context& ctx;
+    sender(system_context& ctx) : ctx(ctx) {}
+
+    friend scheduler;
+
+  public:
+    using is_sender = void;
+    using completion_signatures =
+        stdexec::completion_signatures<stdexec::set_value_t(),
+                                       stdexec::set_error_t(std::exception_ptr),
+                                       stdexec::set_stopped_t()>;
+
+    struct env {
+      system_context& ctx;
+
+      template <class CPO>
+      friend scheduler tag_invoke(stdexec::get_completion_scheduler_t<CPO>,
+                                  const env& self) noexcept {
+        return self.ctx.get_scheduler();
+      }
+    };
+
+    friend env tag_invoke(stdexec::get_env_t, const sender& self) noexcept {
+      return env{self.ctx};
+    }
+
+    template <typename Receiver> struct operation {
+      Receiver receiver;
+
+      operation(Receiver&& receiver) : receiver(std::move(receiver)) {}
+
+      static void callback(void* context) noexcept {
+        auto& op = *static_cast<operation*>(context);
+        try {
+          auto stop_token =
+              stdexec::get_stop_token(stdexec::get_env(op.receiver));
+          if constexpr (std::unstoppable_token<decltype(stop_token)>) {
+            stdexec::set_value((Receiver&&)op.receiver);
+          } else if (stop_token.stop_requested()) {
+            stdexec::set_stopped((Receiver&&)op.receiver);
+          } else {
+            stdexec::set_value((Receiver&&)op.receiver);
+          }
+        } catch (...) {
+          stdexec::set_error((Receiver&&)op.receiver, std::current_exception());
+        }
+      }
+
+      friend void tag_invoke(stdexec::start_t, operation& op) noexcept {
+        dispatch_async_f(
+            dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), &op,
+            &callback);
+      }
+    };
+
+    template <stdexec::receiver Receiver>
+    friend auto tag_invoke(stdexec::connect_t, sender&& s,
+                           Receiver&& r) noexcept -> operation<Receiver> {
+      return {std::forward<Receiver>(r)};
+    }
+  };
+  friend sender tag_invoke(stdexec::schedule_t,
+                           const scheduler& sched) noexcept {
+    return {sched.ctx};
+  }
   friend stdexec::forward_progress_guarantee
   tag_invoke(stdexec::get_forward_progress_guarantee_t,
-             const scheduler&) noexcept;
+             const scheduler&) noexcept {
+    return stdexec::forward_progress_guarantee::parallel;
+  }
   class bulk_sender;
   template <typename Sh, typename F>
   friend bulk_sender tag_invoke(stdexec::bulk_t, const scheduler&, Sh&& sh,
                                 F&& f) noexcept;
 };
+
+inline system_context::scheduler system_context::get_scheduler() {
+  return {*this};
+}
+
 } // namespace
 
 #endif // _STD_EXPERIMENTAL_SYSTEM_CONTEXT
