@@ -471,21 +471,28 @@ struct buffer_queue<T, Alloc>::pop_sender {
     struct cancel_callback {
       operation& self;
       void operator()() noexcept {
-        auto& cq = *self.sender.queue;
+        auto& cq = self.queue;
         unique_lock lock(cq.mutex);
-        // After we acquired lock, the operation might have already completed
-        // and was removed from the queue. Hence, try_remove.
-        if (cq.waiters.try_remove(&self)) {
+        // After we acquired the lock, the operation might have already
+        // completed and was removed from the queue. Hence, try_remove.
+        if (cq.pop_waiters.try_remove(&self)) {
           lock.unlock();
-          stdexec::set_stopped((Receiver&&)self->receiver);
+          self.stop_callback.reset();
+          stdexec::set_stopped((Receiver&&)self.receiver);
         }
       }
     };
+
+    using stop_callback_t = std::optional<typename stdexec::stop_token_of_t<
+        stdexec::env_of_t<Receiver>&>::template callback_type<cancel_callback>>;
+
+    stop_callback_t stop_callback;
 
     operation(buffer_queue& queue, Receiver&& receiver)
         : pop_waiter(result, ec), queue(queue), receiver(std::move(receiver)) {
       this->complete = [](pop_waiter* w) noexcept {
         auto& op = *static_cast<operation*>(w);
+        op.stop_callback.reset();
         if (op.result) {
           STDEX_CONQUEUE_LOG("async_pop: resumed with lvalue: %d\n",
                              *op.result);
@@ -501,6 +508,16 @@ struct buffer_queue<T, Alloc>::pop_sender {
 
     friend void tag_invoke(stdexec::start_t, operation& op) noexcept {
       auto& self = op.queue;
+      auto stop_token = stdexec::get_stop_token(stdexec::get_env(op.receiver));
+      constexpr bool stoppable = !std::unstoppable_token<decltype(stop_token)>;
+
+      if constexpr (stoppable) {
+        if (stop_token.stop_requested()) {
+          stdexec::set_stopped((Receiver&&)op.receiver);
+          return;
+        }
+      }
+
       std::unique_lock lock(self.mutex);
       // If the queue is empty, add ourselves to the waiters.
       if (self.queue.empty()) {
@@ -537,6 +554,14 @@ struct buffer_queue<T, Alloc>::pop_sender {
             "async_pop: queue is empty, putting %p in the waiters queue\n",
             &op);
         self.pop_waiters.push_back(&op);
+        lock.unlock();
+
+        if constexpr (stoppable) {
+          if (stop_token.stop_possible()) {
+            op.stop_callback.emplace(std::move(stop_token),
+                                     cancel_callback{op});
+          }
+        }
         return;
       }
 
