@@ -117,7 +117,7 @@ using namespace std::literals;
 
 exec::task<void> coro(std::experimental::system_context& ctx, int val) {
   printf("coro%d: started\n", val);
-  co_await ctx.get_scheduler().schedule_after(10ms);
+  co_await ctx.get_scheduler().schedule_after(1000s);
   printf("coro%d: done\n", val);
 }
 
@@ -129,6 +129,9 @@ TEST_CASE("system_context: hello") {
 
   for (int i = 1; i < 10; ++i)
     scope.spawn(stdexec::on(sched, coro(ctx, i)));
+
+  std::this_thread::sleep_for(50ms);
+  scope.request_stop();
 
   stdexec::sync_wait(scope.on_empty());
   puts("World");
