@@ -4,12 +4,16 @@
 #ifndef _STD_EXPERIMENTAL_SYSTEM_CONTEXT
 #define _STD_EXPERIMENTAL_SYSTEM_CONTEXT
 
-#include "stdexec/__detail/__execution_fwd.hpp"
 #include <dispatch/dispatch.h> // TODO: move it in platform specific code.
-#include <exception>
+#include <exec/timed_scheduler.hpp>
+#include <std/experimental/__detail/safe_nanosecond_cast.hpp>
 #include <stdexec/execution.hpp>
 
-namespace {
+#include <chrono>
+#include <exception>
+
+namespace std::experimental {
+
 class system_context {
 public:
   system_context() {}
@@ -108,18 +112,102 @@ public:
                            const scheduler& sched) noexcept {
     return {sched.ctx};
   }
-#if 0
+
+  class schedule_after_sender {
+    system_context& ctx;
+    chrono::nanoseconds ns;
+    schedule_after_sender(system_context& ctx, chrono::nanoseconds ns)
+        : ctx(ctx), ns(ns) {}
+
+    friend scheduler;
+
+  public:
+    using is_sender = void;
+    using completion_signatures =
+        stdexec::completion_signatures<stdexec::set_value_t(),
+                                       stdexec::set_error_t(std::exception_ptr),
+                                       stdexec::set_stopped_t()>;
+
+    struct env {
+      system_context& ctx;
+
+      template <class CPO>
+      friend scheduler tag_invoke(stdexec::get_completion_scheduler_t<CPO>,
+                                  const env& self) noexcept {
+        return self.ctx.get_scheduler();
+      }
+    };
+
+    friend env tag_invoke(stdexec::get_env_t,
+                          const schedule_after_sender& self) noexcept {
+      return env{self.ctx};
+    }
+    template <typename Receiver> struct operation {
+      Receiver receiver;
+      chrono::nanoseconds ns;
+
+      operation(Receiver&& receiver, chrono::nanoseconds ns)
+          : receiver(std::move(receiver)), ns(ns) {}
+
+      static void callback(void* context) noexcept {
+        auto& op = *static_cast<operation*>(context);
+        try {
+          auto stop_token =
+              stdexec::get_stop_token(stdexec::get_env(op.receiver));
+          if constexpr (std::unstoppable_token<decltype(stop_token)>) {
+            stdexec::set_value((Receiver&&)op.receiver);
+          } else if (stop_token.stop_requested()) {
+            stdexec::set_stopped((Receiver&&)op.receiver);
+          } else {
+            stdexec::set_value((Receiver&&)op.receiver);
+          }
+        } catch (...) {
+          stdexec::set_error((Receiver&&)op.receiver, std::current_exception());
+        }
+      }
+
+      // TODO: Timer cancellation!!!
+      friend void tag_invoke(stdexec::start_t, operation& op) noexcept {
+        const auto when = dispatch_time(DISPATCH_TIME_NOW, op.ns.count());
+        dispatch_after_f(
+            when, dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0),
+            &op, &callback);
+      }
+    };
+
+    template <stdexec::receiver Receiver>
+    friend auto tag_invoke(stdexec::connect_t, schedule_after_sender&& s,
+                           Receiver&& r) noexcept -> operation<Receiver> {
+      return {std::forward<Receiver>(r), s.ns};
+    }
+  };
+
   template <typename Rep, typename Ratio>
-  auto schedule_after(std::chrono::duration<Rep, Ratio> delay) const noexcept
-      -> schedule_after_sender<std::chrono::duration<Rep, Ratio>> {
-    return schedule_after_sender<std::chrono::duration<Rep, Ratio>>{*context_,
-                                                                    delay};
+  schedule_after_sender
+  schedule_after(std::chrono::duration<Rep, Ratio> delay) const noexcept {
+    return schedule_after_sender{ctx, __detail::safe_nanosecond_cast(delay)};
   }
 
-  auto schedule_at(clock_t::time_point dueTime) const noexcept {
-    return schedule_at_sender{*context_, dueTime};
+  template <typename Clock, typename Duration>
+  auto schedule_at(
+      const chrono::time_point<Clock, Duration>& dueTime) const noexcept {
+    return schedule_after(dueTime - Clock::now());
   }
-#endif
+
+  template <class _Clock, class _Duration>
+  friend auto
+  tag_invoke(exec::schedule_at_t, const scheduler& sched,
+             const std::chrono::time_point<_Clock, _Duration>& at) noexcept {
+    return sched.schedule_at(at);
+  }
+
+  template <typename Rep, typename Ratio>
+  friend auto
+  tag_invoke(exec::schedule_after_t, const scheduler& sched,
+             const std::chrono::duration<Rep, Ratio> delay) noexcept {
+    return sched.schedule_after(delay);
+  }
+
   friend stdexec::forward_progress_guarantee
   tag_invoke(stdexec::get_forward_progress_guarantee_t,
              const scheduler&) noexcept {
@@ -135,6 +223,6 @@ inline system_context::scheduler system_context::get_scheduler() {
   return {*this};
 }
 
-} // namespace
+} // namespace std::experimental
 
 #endif // _STD_EXPERIMENTAL_SYSTEM_CONTEXT

@@ -41,6 +41,8 @@
         "mtry",
         "munique",
         "mzip",
+        "NVBUG",
+        "NVCOMPILER",
         "NVHPC",
         "rcvr",
         "recvr",
@@ -49,6 +51,7 @@
         "sndtraits",
         "STDEX",
         "stdexec",
+        "STRINGIZE",
         "tupl",
         "uncurry",
         "Wundefined"

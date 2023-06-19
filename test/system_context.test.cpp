@@ -6,6 +6,9 @@
 
 #include <stdio.h>
 
+#include <chrono>
+using namespace std::literals;
+
 // dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT,0)
 
 // void dispatch_async_f(dispatch_queue_t queue, void *context, void
@@ -112,19 +115,20 @@
 //      dispatch(3), dispatch_after(3), dispatch_group_create(3),
 //      dispatch_semaphore_create(3)
 
-exec::task<void> coro(int val) {
-  printf("coro%d: started", val);
-  co_return;
+exec::task<void> coro(std::experimental::system_context& ctx, int val) {
+  printf("coro%d: started\n", val);
+  co_await ctx.get_scheduler().schedule_after(10ms);
+  printf("coro%d: done\n", val);
 }
 
 TEST_CASE("system_context: hello") {
   puts("Hello");
-  system_context ctx;
+  std::experimental::system_context ctx;
   auto sched = ctx.get_scheduler();
   exec::async_scope scope;
 
   for (int i = 1; i < 10; ++i)
-    scope.spawn(stdexec::on(sched, coro(i)));
+    scope.spawn(stdexec::on(sched, coro(ctx, i)));
 
   stdexec::sync_wait(scope.on_empty());
   puts("World");
