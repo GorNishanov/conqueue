@@ -12,6 +12,7 @@
 #include <optional>
 #include <system_error>
 
+#include <std/experimental/__detail/easy_cancel.hpp>
 #include <std/experimental/__detail/intrusive_list.hpp>
 #include <std/experimental/__detail/ring_buffer.hpp>
 #include <std/experimental/__detail/spinlock.hpp>
@@ -464,7 +465,6 @@ struct buffer_queue<T, Alloc>::pop_sender {
 
   template <typename Receiver> struct operation : pop_waiter {
     buffer_queue& queue;
-    Receiver receiver;
     std::optional<T> result;
     std::error_code ec;
 
@@ -477,22 +477,21 @@ struct buffer_queue<T, Alloc>::pop_sender {
         // completed and was removed from the queue. Hence, try_remove.
         if (cq.pop_waiters.try_remove(&self)) {
           lock.unlock();
-          self.stop_callback.reset();
+          self.easy_cancel.reset();
           stdexec::set_stopped((Receiver&&)self.receiver);
         }
       }
     };
 
-    using stop_callback_t = std::optional<typename stdexec::stop_token_of_t<
-        stdexec::env_of_t<Receiver>&>::template callback_type<cancel_callback>>;
-
-    stop_callback_t stop_callback;
+    __detail::easy_cancel<Receiver, cancel_callback> easy_cancel;
+    Receiver receiver;
 
     operation(buffer_queue& queue, Receiver&& receiver)
-        : pop_waiter(result, ec), queue(queue), receiver(std::move(receiver)) {
+        : pop_waiter(result, ec), queue(queue), easy_cancel(receiver),
+          receiver(std::move(receiver)) {
       this->complete = [](pop_waiter* w) noexcept {
         auto& op = *static_cast<operation*>(w);
-        op.stop_callback.reset();
+        op.easy_cancel.reset();
         if (op.result) {
           STDEX_CONQUEUE_LOG("async_pop: resumed with lvalue: %d\n",
                              *op.result);
@@ -508,14 +507,10 @@ struct buffer_queue<T, Alloc>::pop_sender {
 
     friend void tag_invoke(stdexec::start_t, operation& op) noexcept {
       auto& self = op.queue;
-      auto stop_token = stdexec::get_stop_token(stdexec::get_env(op.receiver));
-      constexpr bool stoppable = !std::unstoppable_token<decltype(stop_token)>;
 
-      if constexpr (stoppable) {
-        if (stop_token.stop_requested()) {
-          stdexec::set_stopped((Receiver&&)op.receiver);
-          return;
-        }
+      if (op.easy_cancel.stop_requested()) {
+        stdexec::set_stopped((Receiver&&)op.receiver);
+        return;
       }
 
       std::unique_lock lock(self.mutex);
@@ -556,12 +551,7 @@ struct buffer_queue<T, Alloc>::pop_sender {
         self.pop_waiters.push_back(&op);
         lock.unlock();
 
-        if constexpr (stoppable) {
-          if (stop_token.stop_possible()) {
-            op.stop_callback.emplace(std::move(stop_token),
-                                     cancel_callback{op});
-          }
-        }
+        op.easy_cancel.register_callback(cancel_callback{op});
         return;
       }
 
