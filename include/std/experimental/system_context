@@ -108,6 +108,18 @@ public:
                            const scheduler& sched) noexcept {
     return {sched.ctx};
   }
+#if 0
+  template <typename Rep, typename Ratio>
+  auto schedule_after(std::chrono::duration<Rep, Ratio> delay) const noexcept
+      -> schedule_after_sender<std::chrono::duration<Rep, Ratio>> {
+    return schedule_after_sender<std::chrono::duration<Rep, Ratio>>{*context_,
+                                                                    delay};
+  }
+
+  auto schedule_at(clock_t::time_point dueTime) const noexcept {
+    return schedule_at_sender{*context_, dueTime};
+  }
+#endif
   friend stdexec::forward_progress_guarantee
   tag_invoke(stdexec::get_forward_progress_guarantee_t,
              const scheduler&) noexcept {
