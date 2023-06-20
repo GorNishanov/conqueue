@@ -54,3 +54,27 @@ CONSENSUS:
 - Add wording.
 
 - Reach out to implementors and confirm this is implementable.
+
+Snippets:
+```c++
+Runtime type introspection with std::exception ptr
+
+exception_ptr.visit( [&](const std::runtime_error& exc) { cerr << exc.what() << endl; },
+                     [&](const std::logic_error& exc) { cerr << exc.what() << endl; },
+                     [&](const std::exception& exc) { cerr << exc.what() << endl; },
+                     [&](const auto&) { std::terminate(); });
+
+or possibly free functions, like we have with variant:
+
+
+exception_ptr eptr;
+std::visit(eptr, [&](const std::runtime_error& exc) { cerr << exc.what() << endl; },
+                 [&](const std::logic_error& exc) { cerr << exc.what() << endl; },
+                 [&](const std::exception& exc) { cerr << exc.what() << endl; },
+                 [&](const auto&) { std::terminate(); });
+
+if (auto* re = get_if<std::runtime_error>(eptr)) {
+  ...
+}
+
+```
