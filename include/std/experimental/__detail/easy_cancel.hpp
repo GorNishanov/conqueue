@@ -31,11 +31,9 @@ struct easy_cancel_base<Receiver, CancelCallback, StopToken, false> {
     return false;
   }
 
-  void register_callback(CancelCallback&& f) {
-    if (auto* tok = std::get_if<StopToken>(&state))
-      state.template emplace<2>(std::move(*tok), std::move(f));
-    else
-      assert(false);
+  void emplace(CancelCallback&& cancel_callback) {
+    auto token = std::move(std::get<StopToken>(state));
+    state.template emplace<2>(std::move(token), std::move(cancel_callback));
   }
 
   void reset() { state.template emplace<0>(); }

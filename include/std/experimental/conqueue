@@ -362,7 +362,7 @@ struct buffer_queue<T, Alloc>::push_sender {
               &op);
           self.push_waiters.push_back(&op);
           lock.unlock();
-          op.easy_cancel.register_callback(cancel_callback{op});
+          op.easy_cancel.emplace(cancel_callback{op});
           return;
         }
 
@@ -578,7 +578,7 @@ struct buffer_queue<T, Alloc>::pop_sender {
         self.pop_waiters.push_back(&op);
         lock.unlock();
 
-        op.easy_cancel.register_callback(cancel_callback{op});
+        op.easy_cancel.emplace(cancel_callback{op});
         return;
       }
 
