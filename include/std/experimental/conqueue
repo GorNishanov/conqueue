@@ -12,6 +12,7 @@
 #include <optional>
 #include <system_error>
 
+#include <std/experimental/__detail/easy_cancel.hpp>
 #include <std/experimental/__detail/intrusive_list.hpp>
 #include <std/experimental/__detail/ring_buffer.hpp>
 #include <std/experimental/__detail/spinlock.hpp>
@@ -287,23 +288,42 @@ struct buffer_queue<T, Alloc>::push_sender {
   T value;
 
   using is_sender = void;
-  using completion_signatures = // TODO: Cancellation support.
+  using completion_signatures =
       stdexec::completion_signatures<stdexec::set_value_t(),
                                      stdexec::set_error_t(std::exception_ptr),
                                      stdexec::set_stopped_t()>;
 
   template <typename Receiver> struct operation : push_waiter {
     buffer_queue& queue;
-    Receiver receiver;
     T value;
     std::error_code ec;
 
+    struct cancel_callback {
+      operation& self;
+      void operator()() noexcept {
+        auto& cq = self.queue;
+        unique_lock lock(cq.mutex);
+        // After we acquired the lock, the operation might have already
+        // completed and was removed from the queue. Hence, try_remove.
+        if (cq.push_waiters.try_remove(&self)) {
+          lock.unlock();
+          self.easy_cancel.reset();
+          STDEX_CONQUEUE_LOG("push_waiter %p cancelled\n", &self);
+          stdexec::set_stopped((Receiver&&)self.receiver);
+        }
+      }
+    };
+
+    __detail::easy_cancel<Receiver, cancel_callback> easy_cancel;
+    Receiver receiver;
+
     operation(push_sender&& sender, Receiver&& receiver)
-        : push_waiter(ec), queue(sender.queue), receiver(std::move(receiver)),
-          value(std::move(sender.value)) {
+        : push_waiter(ec), queue(sender.queue), easy_cancel(receiver),
+          receiver(std::move(receiver)), value(std::move(sender.value)) {
       this->lval = std::addressof(value);
       this->complete = [](push_waiter* w) noexcept {
         auto& op = *static_cast<operation*>(w);
+        op.easy_cancel.reset();
         if (op.ec)
           stdexec::set_error((Receiver&&)op.receiver,
                              make_exception_ptr(conqueue_error(op.ec)));
@@ -314,6 +334,10 @@ struct buffer_queue<T, Alloc>::push_sender {
 
     friend void tag_invoke(stdexec::start_t, operation& op) noexcept {
       auto& self = op.queue;
+      if (op.easy_cancel.stop_requested()) {
+        stdexec::set_stopped((Receiver&&)op.receiver);
+        return;
+      }
       std::unique_lock lock(self.mutex);
       if (self.closed) {
         lock.unlock();
@@ -337,12 +361,15 @@ struct buffer_queue<T, Alloc>::push_sender {
               "async_push: queue is full, putting %p in the waiters queue\n",
               &op);
           self.push_waiters.push_back(&op);
+          lock.unlock();
+          op.easy_cancel.emplace(cancel_callback{op});
           return;
         }
 
         STDEX_CONQUEUE_LOG("async push: queue is not full, pushing value %d\n",
                            op.value);
         self.queue.push_back(std::move(op.value));
+        lock.unlock();
       }
       stdexec::set_value((Receiver&&)op.receiver);
     }
@@ -457,35 +484,41 @@ struct buffer_queue<T, Alloc>::pop_sender {
   buffer_queue* queue;
 
   using is_sender = void;
-  using completion_signatures = // TODO: Cancellation support.
+  using completion_signatures =
       stdexec::completion_signatures<stdexec::set_value_t(T),
                                      stdexec::set_error_t(std::exception_ptr),
                                      stdexec::set_stopped_t()>;
 
   template <typename Receiver> struct operation : pop_waiter {
     buffer_queue& queue;
-    Receiver receiver;
     std::optional<T> result;
     std::error_code ec;
 
     struct cancel_callback {
       operation& self;
       void operator()() noexcept {
-        auto& cq = *self.sender.queue;
+        auto& cq = self.queue;
         unique_lock lock(cq.mutex);
-        // After we acquired lock, the operation might have already completed
-        // and was removed from the queue. Hence, try_remove.
-        if (cq.waiters.try_remove(&self)) {
+        // After we acquired the lock, the operation might have already
+        // completed and was removed from the queue. Hence, try_remove.
+        if (cq.pop_waiters.try_remove(&self)) {
           lock.unlock();
-          stdexec::set_stopped((Receiver&&)self->receiver);
+          self.easy_cancel.reset();
+          STDEX_CONQUEUE_LOG("pop_waiter %p cancelled\n", &self);
+          stdexec::set_stopped((Receiver&&)self.receiver);
         }
       }
     };
 
+    __detail::easy_cancel<Receiver, cancel_callback> easy_cancel;
+    Receiver receiver;
+
     operation(buffer_queue& queue, Receiver&& receiver)
-        : pop_waiter(result, ec), queue(queue), receiver(std::move(receiver)) {
+        : pop_waiter(result, ec), queue(queue), easy_cancel(receiver),
+          receiver(std::move(receiver)) {
       this->complete = [](pop_waiter* w) noexcept {
         auto& op = *static_cast<operation*>(w);
+        op.easy_cancel.reset();
         if (op.result) {
           STDEX_CONQUEUE_LOG("async_pop: resumed with lvalue: %d\n",
                              *op.result);
@@ -501,6 +534,12 @@ struct buffer_queue<T, Alloc>::pop_sender {
 
     friend void tag_invoke(stdexec::start_t, operation& op) noexcept {
       auto& self = op.queue;
+
+      if (op.easy_cancel.stop_requested()) {
+        stdexec::set_stopped((Receiver&&)op.receiver);
+        return;
+      }
+
       std::unique_lock lock(self.mutex);
       // If the queue is empty, add ourselves to the waiters.
       if (self.queue.empty()) {
@@ -537,6 +576,9 @@ struct buffer_queue<T, Alloc>::pop_sender {
             "async_pop: queue is empty, putting %p in the waiters queue\n",
             &op);
         self.pop_waiters.push_back(&op);
+        lock.unlock();
+
+        op.easy_cancel.emplace(cancel_callback{op});
         return;
       }
 
