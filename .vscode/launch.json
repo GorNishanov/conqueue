@@ -9,7 +9,7 @@
             "request": "launch",
             "name": "Debug",
             "program": "${command:cmake.launchTargetPath}",
-            //"args": ["*rendezvous"],
+            "args": ["visit_eptr*"],
             "cwd": "${command:cmake.launchTargetDirectory}"
         }
     ]
