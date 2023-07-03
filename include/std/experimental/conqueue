@@ -39,7 +39,7 @@ inline error_condition make_error_condition(conqueue_errc e) noexcept {
   return {static_cast<int>(e), conqueue_category()};
 }
 
-class conqueue_error : public runtime_error {
+class conqueue_error : public system_error {
   error_code ec;
 
 public:
