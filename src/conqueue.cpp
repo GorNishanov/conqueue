@@ -34,8 +34,7 @@ const error_category& conqueue_category() noexcept {
 }
 
 conqueue_error::conqueue_error(const std::error_code& ec)
-    : system_error(get_string(static_cast<conqueue_errc>(ec.value()))),
-      ec(ec) {}
+    : system_error(ec) {}
 
 conqueue_error::~conqueue_error() noexcept {}
 

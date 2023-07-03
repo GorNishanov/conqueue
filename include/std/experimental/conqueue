@@ -40,13 +40,9 @@ inline error_condition make_error_condition(conqueue_errc e) noexcept {
 }
 
 class conqueue_error : public system_error {
-  error_code ec;
-
 public:
   explicit conqueue_error(const std::error_code& ec);
   ~conqueue_error() noexcept;
-
-  const error_code& code() const noexcept { return ec; }
 };
 
 // Inspired by https://wg21.link/P0260R5 A proposal to add a concurrent queue
