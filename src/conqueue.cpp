@@ -2,7 +2,6 @@
 // Licensed under MIT license. See LICENSE.txt for details.
 
 #include "std/experimental/conqueue"
-#include <system_error>
 
 namespace std::experimental {
 
@@ -35,7 +34,7 @@ const error_category& conqueue_category() noexcept {
 }
 
 conqueue_error::conqueue_error(const std::error_code& ec)
-    : runtime_error(get_string(static_cast<conqueue_errc>(ec.value()))),
+    : system_error(get_string(static_cast<conqueue_errc>(ec.value()))),
       ec(ec) {}
 
 conqueue_error::~conqueue_error() noexcept {}
