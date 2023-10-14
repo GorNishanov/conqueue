@@ -90,6 +90,10 @@ got '3Baz' i: 1```
 ## Proposed wording
 
 
+## References
+
+https://godbolt.org/z/ErePMf66h (gcc and msvc implementation)
+
 
 
 ## Motivation
