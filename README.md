@@ -15,6 +15,11 @@ Inspired by
 - https://wg21.link/p2882r0 An Event Model for C++ Executors
 
 ```c++
+enum class conqueue_errc { success, empty, full, closed };
+class conqueue_error : public system_error { ... };
+```
+
+```c++
 template <typename T, typename Alloc = std::allocator<T>> class buffer_queue {
 public:
   using value_type = T;
