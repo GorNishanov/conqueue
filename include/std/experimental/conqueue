@@ -478,7 +478,7 @@ struct buffer_queue<T, Alloc>::pop_sender {
 
   using is_sender = void;
   using completion_signatures =
-      stdexec::completion_signatures<stdexec::set_value_t(T),
+      stdexec::completion_signatures<stdexec::set_value_t(std::optional<T>),
                                      stdexec::set_error_t(std::exception_ptr),
                                      stdexec::set_stopped_t()>;
 
@@ -515,7 +515,10 @@ struct buffer_queue<T, Alloc>::pop_sender {
         if (op.result) {
           STDEX_CONQUEUE_LOG("async_pop: resumed with lvalue: %d\n",
                              *op.result);
-          stdexec::set_value((Receiver&&)op.receiver, std::move(*op.result));
+          stdexec::set_value((Receiver&&)op.receiver, std::move(op.result));
+        } else if (op.ec == conqueue_errc::closed) {
+          STDEX_CONQUEUE_LOG("async_pop: resumed with nullopt\n");
+          stdexec::set_value((Receiver&&)op.receiver, std::move(op.result));
         } else {
           STDEX_CONQUEUE_LOG("async_pop: resumed with error: %d\n",
                              op.ec.value());
@@ -553,12 +556,12 @@ struct buffer_queue<T, Alloc>::pop_sender {
             STDEX_CONQUEUE_LOG(
                 "async_pop: consuming directly from waiter %p. lvalue %d\n",
                 waiter, *lval);
-            stdexec::set_value((Receiver&&)op.receiver, std::move(*lval));
+            stdexec::set_value((Receiver&&)op.receiver, std::optional<T>{std::move(*lval)});
           } else {
             STDEX_CONQUEUE_LOG(
                 "async_pop: consuming directly from waiter %p. rvalue %d\n",
                 waiter, *waiter->rval);
-            stdexec::set_value((Receiver&&)op.receiver, *waiter->rval);
+            stdexec::set_value((Receiver&&)op.receiver, std::optional<T>{*waiter->rval});
           }
           STDEX_CONQUEUE_LOG("unlocking pusher %p\n", waiter);
           waiter->complete(waiter);
@@ -590,7 +593,7 @@ struct buffer_queue<T, Alloc>::pop_sender {
         lock.unlock();
       }
 
-      stdexec::set_value((Receiver&&)op.receiver, std::move(value));
+      stdexec::set_value((Receiver&&)op.receiver, std::optional<T>{std::move(value)});
     }
   };
 

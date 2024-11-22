@@ -90,19 +90,19 @@ TEST_CASE("conqueue: coro_push") {
 
   scope.spawn(stdexec::on(pool.get_scheduler(), coro_push(q)));
 
-  REQUIRE(q.pop() == 1);
-  REQUIRE(q.pop() == 2);
-  REQUIRE(q.pop() == 3);
-  REQUIRE(q.pop() == 4);
+  REQUIRE(q.pop().value() == 1);
+  REQUIRE(q.pop().value() == 2);
+  REQUIRE(q.pop().value() == 3);
+  REQUIRE(q.pop().value() == 4);
 
   stdexec::sync_wait(scope.on_empty());
 }
 
 exec::task<void> coro_pop(buffer_queue<int>& q) {
-  REQUIRE(co_await q.async_pop() == 1);
-  REQUIRE(co_await q.async_pop() == 2);
-  REQUIRE(co_await q.async_pop() == 3);
-  REQUIRE(co_await q.async_pop() == 4);
+  REQUIRE((co_await q.async_pop()).value() == 1);
+  REQUIRE((co_await q.async_pop()).value() == 2);
+  REQUIRE((co_await q.async_pop()).value() == 3);
+  REQUIRE((co_await q.async_pop()).value() == 4);
 }
 
 TEST_CASE("conqueue: coro_pop") {
