@@ -3,7 +3,7 @@
 
 #include "std/experimental/conqueue"
 
-namespace std::experimental {
+namespace std {
 
 static const char* get_string(conqueue_errc errc) {
   switch (errc) {
@@ -40,4 +40,4 @@ conqueue_error::conqueue_error(const std::error_code& ec)
 
 conqueue_error::~conqueue_error() noexcept {}
 
-} // namespace std::experimental
+} // namespace std

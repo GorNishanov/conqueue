@@ -5,6 +5,9 @@ include(FetchContent)
 set(BUILD_TESTING OFF)
 set(BUILD_EXAMPLES OFF)
 
+set(STDEXEC_BUILD_TESTS OFF CACHE BOOL "Build stdexec tests" FORCE)
+set(STDEXEC_BUILD_EXAMPLES OFF CACHE BOOL "Build stdexec examples" FORCE)
+
 Include(FetchContent)
 
 FetchContent_Declare(
@@ -16,7 +19,7 @@ FetchContent_Declare(
 FetchContent_Declare(
   stdexec
   GIT_REPOSITORY https://github.com/NVIDIA/stdexec
-  GIT_TAG        068e840dd529293ecdda00e87b25e0f7cfd57fbb # Jun 15, 2023
+  GIT_TAG        999a11e0a82f9e4d0cedb29ed0b0282543b30805 # Nov 18, 2024
 )
 
 FetchContent_MakeAvailable(Catch2 stdexec)

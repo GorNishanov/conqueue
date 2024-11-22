@@ -1,7 +1,7 @@
 #include "std/experimental/__detail/intrusive_list.hpp"
 #include <catch2/catch_test_macros.hpp>
 
-using namespace std::experimental::__detail;
+using namespace std::__conqueue_detail;
 
 struct Item {
   int val{};

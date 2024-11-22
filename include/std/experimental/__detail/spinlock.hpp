@@ -6,7 +6,7 @@
 
 #include <atomic>
 
-namespace std::experimental::__detail {
+namespace std::__conqueue_detail {
 
 // Thank you, bing chat, once again.
 
@@ -33,6 +33,6 @@ public:
   }
 };
 
-} // namespace std::experimental::__detail
+} // namespace std::__conqueue_detail
 
 #endif // _STD_EXPERIMENTAL_CONQUEUE_SPINLOCK

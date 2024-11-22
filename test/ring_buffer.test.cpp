@@ -2,7 +2,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include <utility>
 
-using namespace std::experimental::__detail;
+using namespace std::__conqueue_detail;
 
 int default_ctor_count = 0;
 int value_ctor_count = 0;

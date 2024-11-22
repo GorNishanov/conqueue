@@ -14,10 +14,9 @@
 #include <thread>
 
 using namespace std;
-using namespace std::experimental;
 using namespace std::literals;
 
-using stdexec::on;
+using stdexec::starts_on;
 
 TEST_CASE("conqueue: smoketest") {
   bounded_queue<int> q(2);
@@ -88,7 +87,7 @@ TEST_CASE("conqueue: coro_push") {
   q.push(1);
   q.push(2);
 
-  scope.spawn(stdexec::on(pool.get_scheduler(), coro_push(q)));
+  scope.spawn(stdexec::starts_on(pool.get_scheduler(), coro_push(q)));
 
   REQUIRE(q.pop().value() == 1);
   REQUIRE(q.pop().value() == 2);
@@ -110,7 +109,7 @@ TEST_CASE("conqueue: coro_pop") {
   exec::async_scope scope;
   bounded_queue<int> q(2);
 
-  scope.spawn(on(pool.get_scheduler(), coro_pop(q)));
+  scope.spawn(starts_on(pool.get_scheduler(), coro_pop(q)));
 
   q.push(1);
   q.push(2);
@@ -125,7 +124,7 @@ TEST_CASE("conqueue: coro_pop rendezvous") {
   exec::async_scope scope;
   bounded_queue<int> q(0);
 
-  scope.spawn(on(pool.get_scheduler(), coro_pop(q)));
+  scope.spawn(starts_on(pool.get_scheduler(), coro_pop(q)));
 
   q.push(1);
   q.push(2);
@@ -140,7 +139,7 @@ TEST_CASE("conqueue: coro_push rendezvous") {
   exec::async_scope scope;
   bounded_queue<int> q(0);
 
-  scope.spawn(on(pool.get_scheduler(), coro_push(q, 1, 4)));
+  scope.spawn(starts_on(pool.get_scheduler(), coro_push(q, 1, 4)));
 
   REQUIRE(q.pop() == 1);
   REQUIRE(q.pop() == 2);
@@ -160,7 +159,7 @@ TEST_CASE("conqueue: cancellation async_pop") {
   exec::async_scope scope;
   bounded_queue<int> q(2);
 
-  scope.spawn(on(sched, coro_stuck_pop(q)));
+  scope.spawn(starts_on(sched, coro_stuck_pop(q)));
   std::this_thread::sleep_for(10ms);
   scope.request_stop();
   stdexec::sync_wait(scope.on_empty());
@@ -172,7 +171,7 @@ TEST_CASE("conqueue: cancellation async_push") {
   exec::async_scope scope;
   bounded_queue<int> q(0);
 
-  scope.spawn(on(sched, coro_push(q)));
+  scope.spawn(starts_on(sched, coro_push(q)));
   std::this_thread::sleep_for(10ms);
   scope.request_stop();
   stdexec::sync_wait(scope.on_empty());

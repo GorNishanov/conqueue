@@ -4,7 +4,7 @@
 #ifndef _STD_EXPERIMENTAL_CONQUEUE_INTRUSIVE_LIST
 #define _STD_EXPERIMENTAL_CONQUEUE_INTRUSIVE_LIST
 
-namespace std::experimental::__detail {
+namespace std::__conqueue_detail {
 
 // Thank you bing chat. You did good. Only two bugs needed to be fixed.
 
@@ -148,6 +148,6 @@ private:
   _Item* head_{};
   _Item* tail_{};
 };
-} // namespace std::experimental::__detail
+} // namespace std::__conqueue_detail
 
 #endif // _STD_EXPERIMENTAL_CONQUEUE_INTRUSIVE_LIST

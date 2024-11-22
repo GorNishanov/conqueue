@@ -19,16 +19,16 @@
 #include <std/experimental/__detail/spinlock.hpp>
 #include <stdexec/execution.hpp>
 
-namespace std::experimental {
+namespace std {
 enum class conqueue_errc { success, empty, full, closed, busy };
 }
 
 namespace std {
 template <>
-struct is_error_code_enum<experimental::conqueue_errc> : public true_type {};
+struct is_error_code_enum<conqueue_errc> : public true_type {};
 } // namespace std
 
-namespace std::experimental {
+namespace std {
 
 const error_category& conqueue_category() noexcept;
 
@@ -55,7 +55,7 @@ template <typename T, typename Alloc = std::allocator<T>> class bounded_queue {
   bounded_queue(const bounded_queue&) = delete;
   bounded_queue& operator=(const bounded_queue&) = delete;
 
-  using lock_t = __detail::spinlock;
+  using lock_t = __conqueue_detail::spinlock;
 
   struct pop_sender;
   struct push_sender;
@@ -124,9 +124,9 @@ public:
 
 private:
   lock_t mutex;
-  __detail::ring_buffer<T, Alloc> queue;
-  __detail::intrusive_list<&pop_waiter::prev, &pop_waiter::next> pop_waiters;
-  __detail::intrusive_list<&push_waiter::prev, &push_waiter::next> push_waiters;
+  __conqueue_detail::ring_buffer<T, Alloc> queue;
+  __conqueue_detail::intrusive_list<&pop_waiter::prev, &pop_waiter::next> pop_waiters;
+  __conqueue_detail::intrusive_list<&push_waiter::prev, &push_waiter::next> push_waiters;
   bool closed{};
 };
 
@@ -310,7 +310,7 @@ struct bounded_queue<T, Alloc>::push_sender {
       }
     };
 
-    __detail::easy_cancel<Receiver, cancel_callback> easy_cancel;
+    __conqueue_detail::easy_cancel<Receiver, cancel_callback> easy_cancel;
     Receiver receiver;
 
     operation(push_sender&& sender, Receiver&& receiver)
@@ -503,7 +503,7 @@ struct bounded_queue<T, Alloc>::pop_sender {
       }
     };
 
-    __detail::easy_cancel<Receiver, cancel_callback> easy_cancel;
+    __conqueue_detail::easy_cancel<Receiver, cancel_callback> easy_cancel;
     Receiver receiver;
 
     operation(bounded_queue& queue, Receiver&& receiver)
@@ -609,6 +609,6 @@ typename bounded_queue<T, Alloc>::pop_sender
 bounded_queue<T, Alloc>::async_pop() noexcept {
   return {this};
 }
-} // namespace std::experimental
+} // namespace std
 
 #endif // _STD_EXPERIMENTAL_CONQUEUE
