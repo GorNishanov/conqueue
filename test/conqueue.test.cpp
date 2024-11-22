@@ -183,3 +183,28 @@ TEST_CASE("conqueue: cancellation async_push") {
   scope.request_stop();
   stdexec::sync_wait(scope.on_empty());
 }
+
+std::atomic<int> counter{0};
+
+template <typename Sched>
+exec::task<void> go_deep(exec::async_scope& scope, Sched sched, int n)  {
+    std::this_thread::sleep_for(10ms);
+    ++counter;
+    if(n <= 1)
+        co_return;
+
+    scope.spawn(on(sched, go_deep(scope, sched, n - 1)));
+    std::this_thread::sleep_for(10ms);
+    scope.spawn(on(sched, go_deep(scope, sched, n - 1)));
+}
+
+TEST_CASE("conqueue: recursive spawn") {
+  exec::static_thread_pool pool(16);
+  auto sched = pool.get_scheduler();
+  exec::async_scope scope;
+
+  scope.spawn(on(sched, go_deep(scope, sched, 10)));
+  
+  stdexec::sync_wait(scope.on_empty());
+  printf("%d\n", counter.load());
+}
