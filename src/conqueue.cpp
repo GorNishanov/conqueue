@@ -15,6 +15,8 @@ static const char* get_string(conqueue_errc errc) {
     return "queue is full";
   case conqueue_errc::closed:
     return "queue is closed";
+  case conqueue_errc::busy:
+    return "queue is busy";
   default:
     return "invalid conqueue_errc value";
   }

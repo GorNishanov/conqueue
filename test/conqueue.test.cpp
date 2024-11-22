@@ -44,10 +44,7 @@ TEST_CASE("conqueue: initially closed test") {
     REQUIRE_THROWS_AS(q.push(1), conqueue_error);
   }
   SECTION("pop") {
-    error_code ec;
-    REQUIRE_FALSE(q.pop(ec));
-    REQUIRE(ec == conqueue_errc::closed);
-    REQUIRE_THROWS_AS(q.pop(), conqueue_error);
+    REQUIRE_FALSE(q.pop().has_value());
   }
 }
 
@@ -56,12 +53,9 @@ TEST_CASE("conqueue: pull from closed") {
   q.push(1);
   q.push(2);
   q.close();
-  REQUIRE(q.pop() == 1);
-  REQUIRE(q.pop() == 2);
-  error_code ec;
-  REQUIRE_FALSE(q.pop(ec));
-  REQUIRE(ec == conqueue_errc::closed);
-  REQUIRE_THROWS_AS(q.pop(), conqueue_error);
+  REQUIRE(*q.pop() == 1);
+  REQUIRE(*q.pop() == 2);
+  REQUIRE_FALSE(q.pop().has_value());
 }
 
 TEST_CASE("conqueue: blocking pull then closed") {
@@ -77,8 +71,8 @@ TEST_CASE("conqueue: blocking pull then closed") {
   REQUIRE_FALSE(q.try_pop(ec));
   REQUIRE(ec == conqueue_errc::empty);
 
-  REQUIRE(q.pop() == 1);
-  REQUIRE_THROWS_AS(q.pop(), conqueue_error);
+  REQUIRE(q.pop().value() == 1);
+  REQUIRE_THROWS_AS(q.pop().value(), bad_optional_access);
   t.join();
 }
 

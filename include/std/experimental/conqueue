@@ -20,7 +20,7 @@
 #include <stdexec/execution.hpp>
 
 namespace std::experimental {
-enum class conqueue_errc { success, empty, full, closed };
+enum class conqueue_errc { success, empty, full, closed, busy };
 }
 
 namespace std {
@@ -105,8 +105,7 @@ public:
   // modifiers
   void close() noexcept;
 
-  T pop();
-  std::optional<T> pop(std::error_code& ec);
+  std::optional<T> pop();
   std::optional<T> try_pop(std::error_code& ec);
 
   void push(const T& x);
@@ -463,15 +462,12 @@ optional<T> buffer_queue<T, Alloc>::try_pop(std::error_code& ec) {
   return pop_impl(ec, true);
 }
 
-template <typename T, typename Alloc>
-optional<T> buffer_queue<T, Alloc>::pop(error_code& ec) {
-  return pop_impl(ec);
-}
-
-template <typename T, typename Alloc> T buffer_queue<T, Alloc>::pop() {
+template <typename T, typename Alloc> std::optional<T> buffer_queue<T, Alloc>::pop() {
   std::error_code ec;
-  if (auto result = pop_impl(ec))
-    return *result;
+  auto result = pop_impl(ec);
+
+  if (result || ec == conqueue_errc::closed)
+    return result;
 
   throw conqueue_error(ec);
 }

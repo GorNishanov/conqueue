@@ -1,7 +1,9 @@
 {
     "files.associations": {
         "conqueue": "cpp",
-        "system_error": "cpp"
+        "system_error": "cpp",
+        "optional": "cpp",
+        "future": "cpp"
     },
     "cmake.configureOnOpen": true,
     "cSpell.words": [
