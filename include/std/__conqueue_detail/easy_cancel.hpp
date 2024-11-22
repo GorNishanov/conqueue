@@ -8,7 +8,7 @@
 #include <stdexec/execution.hpp>
 #include <variant>
 
-namespace std::experimental::__detail {
+namespace std::__conqueue_detail {
 
 template <typename Receiver, typename CancelCallback, typename StopToken,
           bool Unstoppable>
@@ -61,6 +61,6 @@ struct easy_cancel : easy_cancel_base<Receiver, CancelCallback, StopToken,
   using base::base;
 };
 
-} // namespace std::experimental::__detail
+} // namespace std::__conqueue_detail
 
 #endif // _STD_EXPERIMENTAL_CONQUEUE_EASY_CANCEL

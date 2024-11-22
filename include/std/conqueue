@@ -4,7 +4,6 @@
 
 #ifndef _STD_EXPERIMENTAL_CONQUEUE
 #define _STD_EXPERIMENTAL_CONQUEUE
-#include "__detail/tracing.hpp"
 
 #include <atomic>
 #include <deque>
@@ -13,22 +12,23 @@
 #include <optional>
 #include <system_error>
 
-#include <std/experimental/__detail/easy_cancel.hpp>
-#include <std/experimental/__detail/intrusive_list.hpp>
-#include <std/experimental/__detail/ring_buffer.hpp>
-#include <std/experimental/__detail/spinlock.hpp>
+#include <std/__conqueue_detail/tracing.hpp>
+#include <std/__conqueue_detail/easy_cancel.hpp>
+#include <std/__conqueue_detail/intrusive_list.hpp>
+#include <std/__conqueue_detail/ring_buffer.hpp>
+#include <std/__conqueue_detail/spinlock.hpp>
 #include <stdexec/execution.hpp>
 
-namespace std::experimental {
-enum class conqueue_errc { success, empty, full, closed };
+namespace std {
+enum class conqueue_errc { success, empty, full, closed, busy };
 }
 
 namespace std {
 template <>
-struct is_error_code_enum<experimental::conqueue_errc> : public true_type {};
+struct is_error_code_enum<conqueue_errc> : public true_type {};
 } // namespace std
 
-namespace std::experimental {
+namespace std {
 
 const error_category& conqueue_category() noexcept;
 
@@ -50,12 +50,12 @@ public:
 // to the standard library and https://wg21.link/p1958 A proposal to add a
 // concurrent queue to the standard library
 
-template <typename T, typename Alloc = std::allocator<T>> class buffer_queue {
-  buffer_queue() = delete;
-  buffer_queue(const buffer_queue&) = delete;
-  buffer_queue& operator=(const buffer_queue&) = delete;
+template <typename T, typename Alloc = std::allocator<T>> class bounded_queue {
+  bounded_queue() = delete;
+  bounded_queue(const bounded_queue&) = delete;
+  bounded_queue& operator=(const bounded_queue&) = delete;
 
-  using lock_t = __detail::spinlock;
+  using lock_t = __conqueue_detail::spinlock;
 
   struct pop_sender;
   struct push_sender;
@@ -95,8 +95,8 @@ template <typename T, typename Alloc = std::allocator<T>> class buffer_queue {
 
 public:
   typedef T value_type;
-  explicit buffer_queue(size_t max_elems, Alloc alloc = Alloc());
-  ~buffer_queue() noexcept;
+  explicit bounded_queue(size_t max_elems, Alloc alloc = Alloc());
+  ~bounded_queue() noexcept;
 
   // observers
   bool is_closed() noexcept { return closed; }
@@ -105,8 +105,7 @@ public:
   // modifiers
   void close() noexcept;
 
-  T pop();
-  std::optional<T> pop(std::error_code& ec);
+  std::optional<T> pop();
   std::optional<T> try_pop(std::error_code& ec);
 
   void push(const T& x);
@@ -125,26 +124,26 @@ public:
 
 private:
   lock_t mutex;
-  __detail::ring_buffer<T, Alloc> queue;
-  __detail::intrusive_list<&pop_waiter::prev, &pop_waiter::next> pop_waiters;
-  __detail::intrusive_list<&push_waiter::prev, &push_waiter::next> push_waiters;
+  __conqueue_detail::ring_buffer<T, Alloc> queue;
+  __conqueue_detail::intrusive_list<&pop_waiter::prev, &pop_waiter::next> pop_waiters;
+  __conqueue_detail::intrusive_list<&push_waiter::prev, &push_waiter::next> push_waiters;
   bool closed{};
 };
 
 // Implementation
 
 template <typename T, typename Alloc>
-buffer_queue<T, Alloc>::buffer_queue(size_t max_elems, Alloc alloc)
+bounded_queue<T, Alloc>::bounded_queue(size_t max_elems, Alloc alloc)
     : queue(max_elems, alloc) {}
 
 template <typename T, typename Alloc>
-buffer_queue<T, Alloc>::~buffer_queue() noexcept {
+bounded_queue<T, Alloc>::~bounded_queue() noexcept {
   close();
 }
 
 template <typename T, typename Alloc>
 template <typename IntrusiveList>
-void buffer_queue<T, Alloc>::locked_drain_waiters(unique_lock<lock_t>& lock,
+void bounded_queue<T, Alloc>::locked_drain_waiters(unique_lock<lock_t>& lock,
                                                   IntrusiveList& waiters) {
   while (auto* waiter = waiters.try_pop_front()) {
     waiter->ec = conqueue_errc::closed;
@@ -155,7 +154,7 @@ void buffer_queue<T, Alloc>::locked_drain_waiters(unique_lock<lock_t>& lock,
 }
 
 template <typename T, typename Alloc>
-void buffer_queue<T, Alloc>::close() noexcept {
+void bounded_queue<T, Alloc>::close() noexcept {
   std::unique_lock lock(mutex);
   if (closed)
     return;
@@ -166,7 +165,7 @@ void buffer_queue<T, Alloc>::close() noexcept {
 
 template <typename T, typename Alloc>
 template <typename U>
-bool buffer_queue<T, Alloc>::push_impl(U&& x, error_code& ec,
+bool bounded_queue<T, Alloc>::push_impl(U&& x, error_code& ec,
                                        bool error_on_full) {
   std::unique_lock lock(mutex);
   if (closed) {
@@ -206,40 +205,40 @@ bool buffer_queue<T, Alloc>::push_impl(U&& x, error_code& ec,
 }
 
 template <typename T, typename Alloc>
-bool buffer_queue<T, Alloc>::try_push(T&& x, error_code& ec) {
+bool bounded_queue<T, Alloc>::try_push(T&& x, error_code& ec) {
   return push_impl(std::move(x), ec, true);
 }
 
 template <typename T, typename Alloc>
-bool buffer_queue<T, Alloc>::try_push(const T& x, error_code& ec) {
+bool bounded_queue<T, Alloc>::try_push(const T& x, error_code& ec) {
   return push_impl(x, ec, true);
 }
 
 template <typename T, typename Alloc>
-bool buffer_queue<T, Alloc>::push(T&& x, error_code& ec) {
+bool bounded_queue<T, Alloc>::push(T&& x, error_code& ec) {
   return push_impl(std::move(x), ec);
 }
 
 template <typename T, typename Alloc>
-bool buffer_queue<T, Alloc>::push(const T& x, error_code& ec) {
+bool bounded_queue<T, Alloc>::push(const T& x, error_code& ec) {
   return push_impl(x, ec);
 }
 
-template <typename T, typename Alloc> void buffer_queue<T, Alloc>::push(T&& x) {
+template <typename T, typename Alloc> void bounded_queue<T, Alloc>::push(T&& x) {
   error_code ec;
   if (!push_impl(std::move(x), ec))
     throw conqueue_error(ec);
 }
 
 template <typename T, typename Alloc>
-void buffer_queue<T, Alloc>::push(const T& x) {
+void bounded_queue<T, Alloc>::push(const T& x) {
   error_code ec;
   if (!push_impl(x, ec))
     throw conqueue_error(ec);
 }
 
 template <typename T, typename Alloc>
-struct buffer_queue<T, Alloc>::sync_push_waiter : push_waiter {
+struct bounded_queue<T, Alloc>::sync_push_waiter : push_waiter {
   std::atomic_flag flag;
 
   sync_push_waiter(error_code& ec) noexcept : push_waiter(ec) {
@@ -263,7 +262,7 @@ struct buffer_queue<T, Alloc>::sync_push_waiter : push_waiter {
 };
 
 template <typename T, typename Alloc>
-struct buffer_queue<T, Alloc>::sync_pop_waiter : pop_waiter {
+struct bounded_queue<T, Alloc>::sync_pop_waiter : pop_waiter {
   std::atomic_flag flag;
 
   sync_pop_waiter(optional<T>& value, error_code& ec) noexcept
@@ -280,8 +279,8 @@ struct buffer_queue<T, Alloc>::sync_pop_waiter : pop_waiter {
 };
 
 template <typename T, typename Alloc>
-struct buffer_queue<T, Alloc>::push_sender {
-  buffer_queue& queue;
+struct bounded_queue<T, Alloc>::push_sender {
+  bounded_queue& queue;
   T value;
 
   using is_sender = void;
@@ -291,7 +290,7 @@ struct buffer_queue<T, Alloc>::push_sender {
                                      stdexec::set_stopped_t()>;
 
   template <typename Receiver> struct operation : push_waiter {
-    buffer_queue& queue;
+    bounded_queue& queue;
     T value;
     std::error_code ec;
 
@@ -311,7 +310,7 @@ struct buffer_queue<T, Alloc>::push_sender {
       }
     };
 
-    __detail::easy_cancel<Receiver, cancel_callback> easy_cancel;
+    __conqueue_detail::easy_cancel<Receiver, cancel_callback> easy_cancel;
     Receiver receiver;
 
     operation(push_sender&& sender, Receiver&& receiver)
@@ -380,19 +379,19 @@ struct buffer_queue<T, Alloc>::push_sender {
 };
 
 template <typename T, typename Alloc>
-typename buffer_queue<T, Alloc>::push_sender buffer_queue<T, Alloc>::async_push(
+typename bounded_queue<T, Alloc>::push_sender bounded_queue<T, Alloc>::async_push(
     T&& x) noexcept(is_nothrow_move_constructible_v<T>) {
   return {*this, std::move(x)};
 }
 
 template <typename T, typename Alloc>
-typename buffer_queue<T, Alloc>::push_sender buffer_queue<T, Alloc>::async_push(
+typename bounded_queue<T, Alloc>::push_sender bounded_queue<T, Alloc>::async_push(
     const T& x) noexcept(is_nothrow_copy_constructible_v<T>) {
   return {*this, x};
 }
 
 template <typename T, typename Alloc>
-optional<T> buffer_queue<T, Alloc>::locked_pop(unique_lock<lock_t>& lock,
+optional<T> bounded_queue<T, Alloc>::locked_pop(unique_lock<lock_t>& lock,
                                                error_code& ec) {
   // The caller already verified that the queue is not empty.
   ec = {};
@@ -411,7 +410,7 @@ optional<T> buffer_queue<T, Alloc>::locked_pop(unique_lock<lock_t>& lock,
 }
 
 template <typename T, typename Alloc>
-optional<T> buffer_queue<T, Alloc>::pop_impl(error_code& ec,
+optional<T> bounded_queue<T, Alloc>::pop_impl(error_code& ec,
                                              bool error_on_empty) {
   std::unique_lock lock(mutex);
 
@@ -459,35 +458,32 @@ optional<T> buffer_queue<T, Alloc>::pop_impl(error_code& ec,
 }
 
 template <typename T, typename Alloc>
-optional<T> buffer_queue<T, Alloc>::try_pop(std::error_code& ec) {
+optional<T> bounded_queue<T, Alloc>::try_pop(std::error_code& ec) {
   return pop_impl(ec, true);
 }
 
-template <typename T, typename Alloc>
-optional<T> buffer_queue<T, Alloc>::pop(error_code& ec) {
-  return pop_impl(ec);
-}
-
-template <typename T, typename Alloc> T buffer_queue<T, Alloc>::pop() {
+template <typename T, typename Alloc> std::optional<T> bounded_queue<T, Alloc>::pop() {
   std::error_code ec;
-  if (auto result = pop_impl(ec))
-    return *result;
+  auto result = pop_impl(ec);
+
+  if (result || ec == conqueue_errc::closed)
+    return result;
 
   throw conqueue_error(ec);
 }
 
 template <typename T, typename Alloc>
-struct buffer_queue<T, Alloc>::pop_sender {
-  buffer_queue* queue;
+struct bounded_queue<T, Alloc>::pop_sender {
+  bounded_queue* queue;
 
   using is_sender = void;
   using completion_signatures =
-      stdexec::completion_signatures<stdexec::set_value_t(T),
+      stdexec::completion_signatures<stdexec::set_value_t(std::optional<T>),
                                      stdexec::set_error_t(std::exception_ptr),
                                      stdexec::set_stopped_t()>;
 
   template <typename Receiver> struct operation : pop_waiter {
-    buffer_queue& queue;
+    bounded_queue& queue;
     std::optional<T> result;
     std::error_code ec;
 
@@ -507,10 +503,10 @@ struct buffer_queue<T, Alloc>::pop_sender {
       }
     };
 
-    __detail::easy_cancel<Receiver, cancel_callback> easy_cancel;
+    __conqueue_detail::easy_cancel<Receiver, cancel_callback> easy_cancel;
     Receiver receiver;
 
-    operation(buffer_queue& queue, Receiver&& receiver)
+    operation(bounded_queue& queue, Receiver&& receiver)
         : pop_waiter(result, ec), queue(queue), easy_cancel(receiver),
           receiver(std::move(receiver)) {
       this->complete = [](pop_waiter* w) noexcept {
@@ -519,7 +515,10 @@ struct buffer_queue<T, Alloc>::pop_sender {
         if (op.result) {
           STDEX_CONQUEUE_LOG("async_pop: resumed with lvalue: %d\n",
                              *op.result);
-          stdexec::set_value((Receiver&&)op.receiver, std::move(*op.result));
+          stdexec::set_value((Receiver&&)op.receiver, std::move(op.result));
+        } else if (op.ec == conqueue_errc::closed) {
+          STDEX_CONQUEUE_LOG("async_pop: resumed with nullopt\n");
+          stdexec::set_value((Receiver&&)op.receiver, std::move(op.result));
         } else {
           STDEX_CONQUEUE_LOG("async_pop: resumed with error: %d\n",
                              op.ec.value());
@@ -557,12 +556,12 @@ struct buffer_queue<T, Alloc>::pop_sender {
             STDEX_CONQUEUE_LOG(
                 "async_pop: consuming directly from waiter %p. lvalue %d\n",
                 waiter, *lval);
-            stdexec::set_value((Receiver&&)op.receiver, std::move(*lval));
+            stdexec::set_value((Receiver&&)op.receiver, std::optional<T>{std::move(*lval)});
           } else {
             STDEX_CONQUEUE_LOG(
                 "async_pop: consuming directly from waiter %p. rvalue %d\n",
                 waiter, *waiter->rval);
-            stdexec::set_value((Receiver&&)op.receiver, *waiter->rval);
+            stdexec::set_value((Receiver&&)op.receiver, std::optional<T>{*waiter->rval});
           }
           STDEX_CONQUEUE_LOG("unlocking pusher %p\n", waiter);
           waiter->complete(waiter);
@@ -594,7 +593,7 @@ struct buffer_queue<T, Alloc>::pop_sender {
         lock.unlock();
       }
 
-      stdexec::set_value((Receiver&&)op.receiver, std::move(value));
+      stdexec::set_value((Receiver&&)op.receiver, std::optional<T>{std::move(value)});
     }
   };
 
@@ -606,10 +605,10 @@ struct buffer_queue<T, Alloc>::pop_sender {
 };
 
 template <typename T, typename Alloc>
-typename buffer_queue<T, Alloc>::pop_sender
-buffer_queue<T, Alloc>::async_pop() noexcept {
+typename bounded_queue<T, Alloc>::pop_sender
+bounded_queue<T, Alloc>::async_pop() noexcept {
   return {this};
 }
-} // namespace std::experimental
+} // namespace std
 
 #endif // _STD_EXPERIMENTAL_CONQUEUE

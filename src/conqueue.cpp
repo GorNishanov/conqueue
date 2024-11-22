@@ -1,9 +1,9 @@
 // Copyright (c) 2023 Gor Nishanov
 // Licensed under MIT license. See LICENSE.txt for details.
 
-#include "std/experimental/conqueue"
+#include "std/conqueue"
 
-namespace std::experimental {
+namespace std {
 
 static const char* get_string(conqueue_errc errc) {
   switch (errc) {
@@ -15,6 +15,8 @@ static const char* get_string(conqueue_errc errc) {
     return "queue is full";
   case conqueue_errc::closed:
     return "queue is closed";
+  case conqueue_errc::busy:
+    return "queue is busy";
   default:
     return "invalid conqueue_errc value";
   }
@@ -38,4 +40,4 @@ conqueue_error::conqueue_error(const std::error_code& ec)
 
 conqueue_error::~conqueue_error() noexcept {}
 
-} // namespace std::experimental
+} // namespace std

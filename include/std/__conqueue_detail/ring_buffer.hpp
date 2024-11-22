@@ -8,7 +8,7 @@
 #include <cassert>
 #include <memory>
 
-namespace std::experimental::__detail {
+namespace std::__conqueue_detail {
 
 // Thank you, bing chat, once again.
 
@@ -99,6 +99,6 @@ private:
   T* buffer_{};       // pointer to the allocated memory for the buffer
 };
 
-} // namespace std::experimental::__detail
+} // namespace std::__conqueue_detail
 
 #endif // _STD_EXPERIMENTAL_CONQUEUE_INTRUSIVE_LIST
