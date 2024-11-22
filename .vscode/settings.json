@@ -25,7 +25,8 @@
         "tuple": "cpp",
         "unordered_map": "cpp",
         "utility": "cpp",
-        "vector": "cpp"
+        "vector": "cpp",
+        "chrono": "cpp"
     },
     "cmake.configureOnOpen": true,
     "cSpell.words": [

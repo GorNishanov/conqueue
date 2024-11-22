@@ -20,7 +20,7 @@ using namespace std::literals;
 using stdexec::on;
 
 TEST_CASE("conqueue: smoketest") {
-  buffer_queue<int> q(2);
+  bounded_queue<int> q(2);
   REQUIRE_FALSE(q.is_closed());
   q.push(1);
   q.push(2);
@@ -33,7 +33,7 @@ TEST_CASE("conqueue: smoketest") {
 }
 
 TEST_CASE("conqueue: initially closed test") {
-  buffer_queue<int> q(2);
+  bounded_queue<int> q(2);
   REQUIRE_FALSE(q.is_closed());
   q.close();
   REQUIRE(q.is_closed());
@@ -49,7 +49,7 @@ TEST_CASE("conqueue: initially closed test") {
 }
 
 TEST_CASE("conqueue: pull from closed") {
-  buffer_queue<int> q(2);
+  bounded_queue<int> q(2);
   q.push(1);
   q.push(2);
   q.close();
@@ -59,7 +59,7 @@ TEST_CASE("conqueue: pull from closed") {
 }
 
 TEST_CASE("conqueue: blocking pull then closed") {
-  buffer_queue<int> q(2);
+  bounded_queue<int> q(2);
   thread t([&q] {
     this_thread::sleep_for(10ms);
     q.push(1);
@@ -76,7 +76,7 @@ TEST_CASE("conqueue: blocking pull then closed") {
   t.join();
 }
 
-exec::task<void> coro_push(buffer_queue<int>& q, int from = 3, int to = 4) {
+exec::task<void> coro_push(bounded_queue<int>& q, int from = 3, int to = 4) {
   for (; from <= to; ++from)
     co_await q.async_push(from);
 }
@@ -84,7 +84,7 @@ exec::task<void> coro_push(buffer_queue<int>& q, int from = 3, int to = 4) {
 TEST_CASE("conqueue: coro_push") {
   exec::static_thread_pool pool(1);
   exec::async_scope scope;
-  buffer_queue<int> q(2);
+  bounded_queue<int> q(2);
   q.push(1);
   q.push(2);
 
@@ -98,7 +98,7 @@ TEST_CASE("conqueue: coro_push") {
   stdexec::sync_wait(scope.on_empty());
 }
 
-exec::task<void> coro_pop(buffer_queue<int>& q) {
+exec::task<void> coro_pop(bounded_queue<int>& q) {
   REQUIRE((co_await q.async_pop()).value() == 1);
   REQUIRE((co_await q.async_pop()).value() == 2);
   REQUIRE((co_await q.async_pop()).value() == 3);
@@ -108,7 +108,7 @@ exec::task<void> coro_pop(buffer_queue<int>& q) {
 TEST_CASE("conqueue: coro_pop") {
   exec::static_thread_pool pool(1);
   exec::async_scope scope;
-  buffer_queue<int> q(2);
+  bounded_queue<int> q(2);
 
   scope.spawn(on(pool.get_scheduler(), coro_pop(q)));
 
@@ -123,7 +123,7 @@ TEST_CASE("conqueue: coro_pop") {
 TEST_CASE("conqueue: coro_pop rendezvous") {
   exec::static_thread_pool pool(1);
   exec::async_scope scope;
-  buffer_queue<int> q(0);
+  bounded_queue<int> q(0);
 
   scope.spawn(on(pool.get_scheduler(), coro_pop(q)));
 
@@ -138,7 +138,7 @@ TEST_CASE("conqueue: coro_pop rendezvous") {
 TEST_CASE("conqueue: coro_push rendezvous") {
   exec::static_thread_pool pool(1);
   exec::async_scope scope;
-  buffer_queue<int> q(0);
+  bounded_queue<int> q(0);
 
   scope.spawn(on(pool.get_scheduler(), coro_push(q, 1, 4)));
 
@@ -150,7 +150,7 @@ TEST_CASE("conqueue: coro_push rendezvous") {
   stdexec::sync_wait(scope.on_empty());
 }
 
-exec::task<void> coro_stuck_pop(buffer_queue<int>& q) {
+exec::task<void> coro_stuck_pop(bounded_queue<int>& q) {
   co_await q.async_pop();
 }
 
@@ -158,7 +158,7 @@ TEST_CASE("conqueue: cancellation async_pop") {
   exec::static_thread_pool pool(1);
   auto sched = pool.get_scheduler();
   exec::async_scope scope;
-  buffer_queue<int> q(2);
+  bounded_queue<int> q(2);
 
   scope.spawn(on(sched, coro_stuck_pop(q)));
   std::this_thread::sleep_for(10ms);
@@ -170,7 +170,7 @@ TEST_CASE("conqueue: cancellation async_push") {
   exec::static_thread_pool pool(1);
   auto sched = pool.get_scheduler();
   exec::async_scope scope;
-  buffer_queue<int> q(0);
+  bounded_queue<int> q(0);
 
   scope.spawn(on(sched, coro_push(q)));
   std::this_thread::sleep_for(10ms);

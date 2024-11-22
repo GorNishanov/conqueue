@@ -20,12 +20,12 @@ class conqueue_error : public system_error { ... };
 ```
 
 ```c++
-template <typename T, typename Alloc = std::allocator<T>> class buffer_queue {
+template <typename T, typename Alloc = std::allocator<T>> class bounded_queue {
 public:
   using value_type = T;
 
-  explicit buffer_queue(size_t max_elems, Alloc alloc = Alloc());
-  ~buffer_queue() noexcept;
+  explicit bounded_queue(size_t max_elems, Alloc alloc = Alloc());
+  ~bounded_queue() noexcept;
 
   // observers
   bool is_closed() noexcept;

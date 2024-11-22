@@ -8,13 +8,13 @@ We propose adding `as_expected` sender adapter that will convert errors of
 `std::exception_ptr`, `error_code` enums or `std::system_error` into
 `std::expected<T, std::error_code>`.
 
-## Use case: buffer_queue
+## Use case: bounded_queue
 
-buffer_queue offers a throwing and non-throwing version of synchronous APIs as follows:
+bounded_queue offers a throwing and non-throwing version of synchronous APIs as follows:
 
 ```c++
-void buffer_queue::push(T&&); // throws if queue is closed.
-bool buffer_queue::push(T&&, std::error_code& ec); // returns false and set ec if queue is closed.
+void bounded_queue::push(T&&); // throws if queue is closed.
+bool bounded_queue::push(T&&, std::error_code& ec); // returns false and set ec if queue is closed.
 
 q.push(5); // throws on closed;
 
