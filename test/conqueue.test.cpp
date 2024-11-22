@@ -1,5 +1,5 @@
 #define STDEX_CONQUEUE_ENABLE_TRACING
-#include <std/experimental/conqueue>
+#include <std/conqueue>
 
 #include <catch2/catch_test_macros.hpp>
 

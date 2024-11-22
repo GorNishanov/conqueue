@@ -4,7 +4,6 @@
 
 #ifndef _STD_EXPERIMENTAL_CONQUEUE
 #define _STD_EXPERIMENTAL_CONQUEUE
-#include "__detail/tracing.hpp"
 
 #include <atomic>
 #include <deque>
@@ -13,10 +12,11 @@
 #include <optional>
 #include <system_error>
 
-#include <std/experimental/__detail/easy_cancel.hpp>
-#include <std/experimental/__detail/intrusive_list.hpp>
-#include <std/experimental/__detail/ring_buffer.hpp>
-#include <std/experimental/__detail/spinlock.hpp>
+#include <std/__conqueue_detail/tracing.hpp>
+#include <std/__conqueue_detail/easy_cancel.hpp>
+#include <std/__conqueue_detail/intrusive_list.hpp>
+#include <std/__conqueue_detail/ring_buffer.hpp>
+#include <std/__conqueue_detail/spinlock.hpp>
 #include <stdexec/execution.hpp>
 
 namespace std {
